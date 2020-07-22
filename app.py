@@ -157,9 +157,9 @@ def trajectory_pred_func(events: List[Event]) -> List[Tuple[float, float, float]
 
 
 # @constraint(AppSoftware="yolo")
-@task(returns=list, listBoxes=IN, dt=IN, initial_age=IN, age_threshold=IN, trackers=IN)
-def execute_tracking(list_boxes, dt, n_states, initial_age, age_threshold, trackers, tracker_indexes, cur_index):
-    return track.track2(list_boxes, dt, n_states, initial_age, age_threshold, trackers, tracker_indexes, cur_index)
+@task(returns=list, listBoxes=IN, trackers=IN, tracker_indexes=IN, cur_index=IN)
+def execute_tracking(list_boxes, trackers, tracker_indexes, cur_index):
+    return track.track2(list_boxes, trackers, tracker_indexes, cur_index)
 
 
 # @constraint(AppSoftware="yolo")
@@ -218,21 +218,36 @@ def populate_snapshot(tracker):
         vel_pred = ev.predList[-1].vel if len(ev.predList) > 0 else -1
         lat = ev.traj[-1].x
         lon = ev.traj[-1].y
-        # if int(ev.class_) == 1:
-        if int(ev.cl) == 1:
-            obj = Vehicle(VehicleType.Bicycle, float(vel_pred))
-        elif int(ev.cl) == 5:
-            obj = Vehicle(VehicleType.Bus, float(vel_pred))
-        elif int(ev.cl) == 6:
-            obj = Vehicle(VehicleType.Car, float(vel_pred))
-        elif int(ev.cl) == 13:
-            obj = Vehicle(VehicleType.Motorcycle, float(vel_pred))
-        elif int(ev.cl) == 14:
+        # if int(ev.cl) == 1:
+        if ev.cl == 0:
             obj = PedestrianFlow(1)
+        elif ev.cl == 1:
+            obj = Vehicle(VehicleType.Car, float(vel_pred))
+        elif ev.cl == 2:
+            print("\tA truck was detected")
+            continue
+        elif ev.cl == 3:
+            obj = Vehicle(VehicleType.Bus, float(vel_pred))
+        elif ev.cl == 4:
+            obj = Vehicle(VehicleType.Motorcycle, float(vel_pred))
+        elif ev.cl == 5:
+            obj = Vehicle(VehicleType.Bicycle, float(vel_pred))
+        elif ev.cl == 6:
+            print("\tA rider was detected")
+            continue
+        elif ev.cl == 7:
+            print("\tA traffic light was detected")
+            continue
+        elif ev.cl == 8:
+            print("\tA traffic sign was detected")
+            continue
+        elif ev.cl == 9:
+            print("\tA train was detected")
+            continue
         else:
+            print(f"\tUnidentifiable object with class {ev.cl}")
             continue
         event = Event(obj, Position(float(lon), float(lat)), datetime.now(), ev.id, ev.cl)
-        # event = Event(obj, Position(float(lon), float(lat)), datetime.now(), ev.id_, ev.class_)
         events.append(event)
     return events
 
@@ -242,10 +257,6 @@ def execute_trackers():
     tracker2 = []
     tracker3 = []
 
-    initial_age = -5
-    age_threshold = -8
-    n_states = 5
-    dt = 0.03
     tracker_indexes = []
     cur_index = 0
 
@@ -257,12 +268,10 @@ def execute_trackers():
     while ret:
         ret, list_boxes = compss_wait_on(receive_boxes())  # TODO: Somehow do not use compss_wait_on
 
-        print(f"[{i}] Ret is {ret}")
-
         if ret:
-            tracker1, tracker_indexes, cur_index = execute_tracking([t for t in list_boxes if t.x + t.w < reference_x and t.y + t.h < reference_y], dt, n_states, initial_age, age_threshold, tracker1, tracker_indexes, cur_index)
-            tracker2, tracker_indexes, cur_index = execute_tracking([t for t in list_boxes if t.x + t.w >= reference_x and t.y + t.h < reference_y], dt, n_states, initial_age, age_threshold, tracker2, tracker_indexes, cur_index)
-            tracker3, tracker_indexes, cur_index = execute_tracking([t for t in list_boxes if t.y + t.h >= reference_y], dt, n_states, initial_age, age_threshold, tracker3, tracker_indexes, cur_index)
+            tracker1, tracker_indexes, cur_index = execute_tracking([t for t in list_boxes if t.x + t.w < reference_x and t.y + t.h < reference_y], tracker1, tracker_indexes, cur_index)
+            tracker2, tracker_indexes, cur_index = execute_tracking([t for t in list_boxes if t.x + t.w >= reference_x and t.y + t.h < reference_y], tracker2, tracker_indexes, cur_index)
+            tracker3, tracker_indexes, cur_index = execute_tracking([t for t in list_boxes if t.y + t.h >= reference_y], tracker3, tracker_indexes, cur_index)
             snapshot = EventsSnapshot()
 
             for tracker in [tracker1, tracker2, tracker3]:
