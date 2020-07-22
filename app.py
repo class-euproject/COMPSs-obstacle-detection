@@ -11,25 +11,6 @@ QUAD_REG_LEN = 20
 QUAD_REG_OFFSET = 5
 
 
-class Boolean:
-    def __init__(self, __val: bool):
-        self.__value = __val
-
-    def __eq__(self, other):
-        if isinstance(other, Boolean):
-            return self.__value == other.__value
-        elif isinstance(other, bool):
-            return self.__value == other
-        else:
-            return False
-
-    def __str__(self):
-        return str(self.__value)
-
-    def set(self, __val):
-        self.__value = __val
-
-
 def traj_pred(dqx: deque, dqy: deque, dqt: deque) -> Tuple[List[float], List[float], List[float]]:
     import math
     vct_t = list(dqt)
@@ -177,9 +158,8 @@ def trajectory_pred_func(events: List[Event]) -> List[Tuple[float, float, float]
 
 # @constraint(AppSoftware="yolo")
 @task(returns=list, listBoxes=IN, dt=IN, initial_age=IN, age_threshold=IN, trackers=IN)
-def execute_tracking(listBoxes, dt, n_states, initial_age, age_threshold, trackers, fn):
-    newBoxes = [t for t in listBoxes if fn(t)]
-    return track.Track2(newBoxes, dt, n_states, initial_age, age_threshold, trackers)
+def execute_tracking(list_boxes, dt, n_states, initial_age, age_threshold, trackers, tracker_indexes, cur_index):
+    return track.track2(list_boxes, dt, n_states, initial_age, age_threshold, trackers, tracker_indexes, cur_index)
 
 
 # @constraint(AppSoftware="yolo")
@@ -189,27 +169,24 @@ def receive_boxes():
     import struct
 
     context = zmq.Context()
-    sink = context.socket(zmq.REQ)
+    sink = context.socket(zmq.REP)
     sink.connect("tcp://127.0.0.1:5559")  # tcp://172.0.0.1 for containerized executions
-
-    sink.send_string("")
 
     double_size = 8
     int_size = float_size = 4
 
     boxes = []
-    print("Awaiting message...")
     message = sink.recv()
+    sink.send_string("")
     flag = len(message) > 0
-    print(f"Flag is {flag}")
 
-    if flag:
-        for offset in range(1, len(message), double_size * 2 + int_size + 1 + float_size * 4):
-            coord_north, coord_east, frame_number, obj_class = struct.unpack_from('ddIc', message[
-                                                                                          offset:offset + double_size * 2 + int_size + 1])
-            x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 2 + int_size + 1:])
-            # print((coord_north, coord_east, frame_number, ord(obj_class), x, y, w, h))
-            boxes.append(track.Data(coord_north, coord_east, frame_number, ord(obj_class), x, y, w, h))
+    for offset in range(1, len(message), double_size * 2 + int_size + 1 + float_size * 4):
+        coord_north, coord_east, frame_number, obj_class = struct.unpack_from('ddIc', message[
+                                                                                      offset:offset + double_size * 2 + int_size + 1])
+        x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 2 + int_size + 1:])
+        # print((coord_north, coord_east, frame_number, ord(obj_class), x, y, w, h))
+        boxes.append(track.obj_m(x, y, frame_number, ord(obj_class), int(w), int(h)))
+    print(f"Found a total of {len(boxes)} boxes")
     return flag, boxes
 
 
@@ -238,35 +215,39 @@ def print_trackers(tracker1, tracker2, tracker3):
 def populate_snapshot(tracker):
     events = []
     for ev in tracker:
-        vel_pred = ev.pred_list_[-1].vel_ if len(ev.pred_list_) > 0 else -1
-        lat = ev.traj_[-1].x_
-        lon = ev.traj_[-1].y_
-        if int(ev.class_) == 1:
+        vel_pred = ev.predList[-1].vel if len(ev.predList) > 0 else -1
+        lat = ev.traj[-1].x
+        lon = ev.traj[-1].y
+        # if int(ev.class_) == 1:
+        if int(ev.cl) == 1:
             obj = Vehicle(VehicleType.Bicycle, float(vel_pred))
-        elif int(ev.class_) == 5:
+        elif int(ev.cl) == 5:
             obj = Vehicle(VehicleType.Bus, float(vel_pred))
-        elif int(ev.class_) == 6:
+        elif int(ev.cl) == 6:
             obj = Vehicle(VehicleType.Car, float(vel_pred))
-        elif int(ev.class_) == 13:
+        elif int(ev.cl) == 13:
             obj = Vehicle(VehicleType.Motorcycle, float(vel_pred))
-        elif int(ev.class_) == 14:
+        elif int(ev.cl) == 14:
             obj = PedestrianFlow(1)
         else:
             continue
-        event = Event(obj, Position(float(lon), float(lat)), datetime.now(), ev.id_, ev.class_)
+        event = Event(obj, Position(float(lon), float(lat)), datetime.now(), ev.id, ev.cl)
+        # event = Event(obj, Position(float(lon), float(lat)), datetime.now(), ev.id_, ev.class_)
         events.append(event)
     return events
 
 
 def execute_trackers():
-    trackers1 = []
-    trackers2 = []
-    trackers3 = []
+    tracker1 = []
+    tracker2 = []
+    tracker3 = []
 
     initial_age = -5
     age_threshold = -8
     n_states = 5
     dt = 0.03
+    tracker_indexes = []
+    cur_index = 0
 
     video_resolution = (1920, 1080)  # TODO: RESOLUTION SHOULD NOT BE HARDCODED!
     reference_x, reference_y = [r // 2 for r in video_resolution]
@@ -274,20 +255,17 @@ def execute_trackers():
     i = 0
     ret = True
     while ret:
-        ret, list_boxes = compss_wait_on(receive_boxes())
+        ret, list_boxes = compss_wait_on(receive_boxes())  # TODO: Somehow do not use compss_wait_on
 
         print(f"[{i}] Ret is {ret}")
 
         if ret:
-            trackers1 = execute_tracking(list_boxes, dt, n_states, initial_age, age_threshold, trackers1,
-                                         lambda t: t.x_pixel_ + t.w_ < reference_x and t.y_pixel_ + t.h_ < reference_y)
-            trackers2 = execute_tracking(list_boxes, dt, n_states, initial_age, age_threshold, trackers2,
-                                         lambda t: t.x_pixel_ + t.w_ >= reference_x and t.y_pixel_ + t.h_ < reference_y)
-            trackers3 = execute_tracking(list_boxes, dt, n_states, initial_age, age_threshold, trackers3,
-                                         lambda t: t.y_pixel_ + t.h_ >= reference_y)
-
+            tracker1, tracker_indexes, cur_index = execute_tracking([t for t in list_boxes if t.x + t.w < reference_x and t.y + t.h < reference_y], dt, n_states, initial_age, age_threshold, tracker1, tracker_indexes, cur_index)
+            tracker2, tracker_indexes, cur_index = execute_tracking([t for t in list_boxes if t.x + t.w >= reference_x and t.y + t.h < reference_y], dt, n_states, initial_age, age_threshold, tracker2, tracker_indexes, cur_index)
+            tracker3, tracker_indexes, cur_index = execute_tracking([t for t in list_boxes if t.y + t.h >= reference_y], dt, n_states, initial_age, age_threshold, tracker3, tracker_indexes, cur_index)
             snapshot = EventsSnapshot()
-            for tracker in [trackers1, trackers2, trackers3]:
+
+            for tracker in [tracker1, tracker2, tracker3]:
                 snapshot.add_events(compss_wait_on(populate_snapshot(tracker)))
             if i % 5 == 0 and i != 0:
                 compss_barrier()
