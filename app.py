@@ -65,9 +65,15 @@ def print_trackers(tracker1, tracker2, tracker3):
                   " Predicted Yaw: " + str(yaw_pred))
 
 
+@task(trackers=IN, count=IN)
 def federate_info(trackers, count):
     import uuid
+    import os
+    os.environ["DATACLAYSESSIONCONFIG"] = "/tmp/pycharm_project_225/cfgfiles/session.properties"
+    os.environ["DATACLAYCLIENTCONFIG"] = "/tmp/pycharm_project_225/cfgfiles/client.properties"
     from dataclay.api import init, finish, register_dataclay
+    from dataclay.exceptions.exceptions import DataClayException
+    # init("/tmp/pycharm_project_225/cfgfiles/session.properties")
     init()
 
     from CityNS.classes import Event, Object, EventsSnapshot
@@ -76,27 +82,29 @@ def federate_info(trackers, count):
     snapshot = EventsSnapshot(snapshot_alias)
     snapshot.make_persistent(alias=snapshot_alias)
 
-    dataclay_cloud = register_dataclay("192.168.7.32", 11034)
+    # dataclay_cloud = register_dataclay("192.168.7.32", 11034)
     for tracker in trackers:
         vel_pred = tracker.predList[-1].vel if len(tracker.predList) > 0 else -1
         lat = tracker.traj[-1].x
         lon = tracker.traj[-1].y
 
         event = Event(uuid.uuid4().int, datetime.now(), lon, lat)
+        print(f"Registering object alias {tracker.id}")
         object_alias = str(tracker.id)
         try:
             event_object = Object.get_by_alias(object_alias)
-        except:
+        except DataClayException as e:
             event_object = Object(tracker.id, classes[tracker.cl], vel_pred, -1)
             event_object.make_persistent(alias=object_alias)
 
         event_object.add_event(event)
-        event_object.federate(dataclay_cloud)
+        # event_object.federate(dataclay_cloud)
         snapshot.add_object_refs(object_alias)
 
     try:
-        snapshot.federate(dataclay_cloud)
-    except Exception as e:
+        # snapshot.federate(dataclay_cloud)
+        pass
+    except DataClayException as e:
         print(e)
     # finish()
 
@@ -115,17 +123,15 @@ def execute_trackers():
     i = 0
     ret = True
     while ret:
-        ret, list_boxes = compss_wait_on(receive_boxes())  # TODO: Somehow do not use compss_wait_on
+        ret, list_boxes = compss_wait_on(receive_boxes())
 
         if ret:
-            tracker1, tracker_indexes, cur_index = execute_tracking([t for t in list_boxes if t.x + t.w < reference_x and t.y + t.h < reference_y], tracker1, tracker_indexes, cur_index)
-            tracker2, tracker_indexes, cur_index = execute_tracking([t for t in list_boxes if t.x + t.w >= reference_x and t.y + t.h < reference_y], tracker2, tracker_indexes, cur_index)
-            tracker3, tracker_indexes, cur_index = execute_tracking([t for t in list_boxes if t.y + t.h >= reference_y], tracker3, tracker_indexes, cur_index)
+            tracker1, tracker_indexes, cur_index = compss_wait_on(execute_tracking([t for t in list_boxes if t.x + t.w < reference_x and t.y + t.h < reference_y], tracker1, tracker_indexes, cur_index))
+            tracker2, tracker_indexes, cur_index = compss_wait_on(execute_tracking([t for t in list_boxes if t.x + t.w >= reference_x and t.y + t.h < reference_y], tracker2, tracker_indexes, cur_index))
+            tracker3, tracker_indexes, cur_index = compss_wait_on(execute_tracking([t for t in list_boxes if t.y + t.h >= reference_y], tracker3, tracker_indexes, cur_index))
 
             federate_info(tracker1 + tracker2 + tracker3, i)
-            if i % 5 == 0 and i != 0:
-                compss_barrier()
-
+            compss_barrier()
             i += 1
 
 
