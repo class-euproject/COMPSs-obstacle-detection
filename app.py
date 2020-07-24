@@ -4,156 +4,10 @@ from pycompss.api.api import compss_barrier, compss_wait_on
 from collections import deque
 from typing import Tuple, List
 import track
-from model import EventsSnapshot, Vehicle, VehicleType, Event, PedestrianFlow, Position
 from datetime import datetime
 
 QUAD_REG_LEN = 20
 QUAD_REG_OFFSET = 5
-
-
-def traj_pred(dqx: deque, dqy: deque, dqt: deque) -> Tuple[List[float], List[float], List[float]]:
-    import math
-    vct_t = list(dqt)
-    transformed_timestamps = []
-    initial_timestamp = math.floor(vct_t[0] / 1000)
-    for actual_timestamp in vct_t:
-        transformed_timestamps.append(actual_timestamp / 1000 - initial_timestamp)
-    vct_x = transformed_timestamps
-
-    vct_y = list(dqx)
-    vct_xp = list()
-    ft = list()
-    last_t = vct_x[-1]
-    for i in range(1, QUAD_REG_OFFSET + 1):
-        vct_xp.append(last_t + i)
-        ft.append(vct_t[-1] + i * 1000)
-
-    fx = quad_reg(vct_x, vct_y, vct_xp)
-
-    vct_x = list(dqx)
-    vct_y = list(dqy)
-
-    if min(vct_x) <= fx[-1] <= max(vct_x):
-        fy = circle_fit(vct_x, vct_y, fx)
-    else:
-        fy = quad_reg(vct_x, vct_y, fx)
-
-    return fx, fy, ft
-
-
-def circle_fit(vct_x: List, vct_y: List, xin: List) -> List[float]:
-    import numpy as np
-    import math
-
-    x_bar = sum(vct_x) / len(vct_x)
-    y_bar = sum(vct_y) / len(vct_y)
-
-    u = [vct_x[i] - x_bar for i in range(len(vct_x))]
-    v = [vct_y[i] - y_bar for i in range(len(vct_y))]
-
-    # if all values are equal, return the same x,y coordinates
-    if (len(np.unique(u)) == 1) or (len(np.unique(v)) == 1):
-        fy = list()
-        for x in xin:
-            fy.append(vct_x[-1])
-        return fy
-
-    S_uu = S_vv = S_uuu = S_vvv = S_uv = S_uvv = S_vuu = 0.0
-
-    for i in range(len(vct_x)):
-        S_uu += u[i] * u[i]
-        S_vv += v[i] * v[i]
-        S_uuu += u[i] * u[i] * u[i]
-        S_vvv += v[i] * v[i] * v[i]
-        S_uv += u[i] * v[i]
-        S_uvv += u[i] * v[i] * v[i]
-        S_vuu += v[i] * u[i] * u[i]
-
-    v_c = (S_uv * (S_uuu + S_uvv) - S_uu * (S_vvv + S_vuu)) / (2 * (S_uv * S_uv - S_uu * S_vv))
-    u_c = (0.5 * (S_uuu + S_uvv) - v_c * S_uv) / S_uu
-    x_c = u_c + x_bar
-    y_c = v_c + y_bar
-
-    a = u_c * u_c + v_c * v_c + (S_uu + S_vv) / len(vct_x)
-    R = math.sqrt(a)
-
-    # loop to predict multiple values
-    fy = list()
-    for x in xin:
-        b = -2 * y_c
-        xdiff = x - x_c
-        c = y_c * y_c - R * R + xdiff * xdiff
-        sr = b * b - 4 * c
-
-        yout1 = yout2 = 0.0
-
-        if sr < 0:
-            fy.append(quad_reg(vct_x, vct_y, [x])[-1])  # get y from x
-        else:
-            yout1 = (-b + math.sqrt(b * b - 4 * c)) / 2
-            yout2 = (-b - math.sqrt(b * b - 4 * c)) / 2
-
-        if min(vct_y) <= yout1 <= max(vct_y):
-            fy.append(yout1)
-        else:
-            fy.append(yout2)
-
-    return fy
-
-
-def quad_reg(vx: List, vy: List, z: List) -> List[float]:
-    import numpy as np
-    sum_xi2_by_yi = sum_xi_by_yi = sum_yi = sum_xi = sum_xi2 = sum_xi3 = sum_xi4 = 0.0
-
-    for i in range(len(vx)):
-        sum_xi += vx[i]
-        sum_xi2 += vx[i] ** 2
-        sum_xi3 += vx[i] ** 3
-        sum_xi4 += vx[i] ** 4
-        sum_yi += vy[i]
-        sum_xi_by_yi += vx[i] * vy[i]
-        sum_xi2_by_yi += vx[i] ** 2 * vy[i]
-
-    A = np.array([[sum_xi4, sum_xi3, sum_xi2], [sum_xi3, sum_xi2, sum_xi], [sum_xi2, sum_xi, len(vx)]])
-    b = np.array([sum_xi2_by_yi, sum_xi_by_yi, sum_yi])
-    try:
-        x_prime = np.linalg.solve(A, b)
-    except np.linalg.linalg.LinAlgError:
-        x_prime = np.linalg.lstsq(A, b)[0]  # for singular matrix exceptions
-
-    a, b, c = x_prime[:3]
-
-    # loop to predict multiple values
-    fy = list()
-    for x in z:
-        fx = x
-        fy.append(a * fx ** 2 + b * fx + c)
-
-    return fy
-
-
-@task(events=IN, returns=List[Tuple[float, float, float]])
-def trajectory_pred_func(events: List[Event]) -> List[Tuple[float, float, float]]:
-    dqx = deque()
-    dqy = deque()
-    dqt = deque()
-    # print(f"events num: {len(events)}")
-    # if len(events) <= QUAD_REG_LEN:
-    #    return [(-1, -1, -1)]
-    try:
-        for event in events[-QUAD_REG_LEN:]:
-            dqx.append(float(event.pos.lon))
-            dqy.append(float(event.pos.lat))
-            dqt.append(int(event.dt.timestamp()))
-        # if len(dqx) > QUAD_REG_LEN:
-        fx, fy, t = traj_pred(dqx, dqy, dqt)
-        return [(fx[i], fy[i], t[i]) for i in range(len(fx))]
-        # else:
-        #     return [(-1, -1, -1)]
-    except Exception as e:
-        print(e)
-        raise e
-        # return -1, -1
 
 
 # @constraint(AppSoftware="yolo")
@@ -211,45 +65,40 @@ def print_trackers(tracker1, tracker2, tracker3):
                   " Predicted Yaw: " + str(yaw_pred))
 
 
-@task(returns=list, tracker=IN)
-def populate_snapshot(tracker):
-    events = []
-    for ev in tracker:
-        vel_pred = ev.predList[-1].vel if len(ev.predList) > 0 else -1
-        lat = ev.traj[-1].x
-        lon = ev.traj[-1].y
-        # if int(ev.cl) == 1:
-        if ev.cl == 0:
-            obj = PedestrianFlow(1)
-        elif ev.cl == 1:
-            obj = Vehicle(VehicleType.Car, float(vel_pred))
-        elif ev.cl == 2:
-            print("\tA truck was detected")
-            continue
-        elif ev.cl == 3:
-            obj = Vehicle(VehicleType.Bus, float(vel_pred))
-        elif ev.cl == 4:
-            obj = Vehicle(VehicleType.Motorcycle, float(vel_pred))
-        elif ev.cl == 5:
-            obj = Vehicle(VehicleType.Bicycle, float(vel_pred))
-        elif ev.cl == 6:
-            print("\tA rider was detected")
-            continue
-        elif ev.cl == 7:
-            print("\tA traffic light was detected")
-            continue
-        elif ev.cl == 8:
-            print("\tA traffic sign was detected")
-            continue
-        elif ev.cl == 9:
-            print("\tA train was detected")
-            continue
-        else:
-            print(f"\tUnidentifiable object with class {ev.cl}")
-            continue
-        event = Event(obj, Position(float(lon), float(lat)), datetime.now(), ev.id, ev.cl)
-        events.append(event)
-    return events
+def federate_info(trackers, count):
+    import uuid
+    from dataclay.api import init, finish, register_dataclay
+    init()
+
+    from CityNS.classes import Event, Object, EventsSnapshot
+    classes = ["person", "car", "truck", "bus", "motor", "bike", "rider", "traffic light", "traffic sign", "train"]
+    snapshot_alias = "events" + str(count)
+    snapshot = EventsSnapshot(snapshot_alias)
+    snapshot.make_persistent(alias=snapshot_alias)
+
+    dataclay_cloud = register_dataclay("192.168.7.32", 11034)
+    for tracker in trackers:
+        vel_pred = tracker.predList[-1].vel if len(tracker.predList) > 0 else -1
+        lat = tracker.traj[-1].x
+        lon = tracker.traj[-1].y
+
+        event = Event(uuid.uuid4().int, datetime.now(), lon, lat)
+        object_alias = str(tracker.id)
+        try:
+            event_object = Object.get_by_alias(object_alias)
+        except:
+            event_object = Object(tracker.id, classes[tracker.cl], vel_pred, -1)
+            event_object.make_persistent(alias=object_alias)
+
+        event_object.add_event(event)
+        event_object.federate(dataclay_cloud)
+        snapshot.add_object_refs(object_alias)
+
+    try:
+        snapshot.federate(dataclay_cloud)
+    except Exception as e:
+        print(e)
+    # finish()
 
 
 def execute_trackers():
@@ -272,20 +121,12 @@ def execute_trackers():
             tracker1, tracker_indexes, cur_index = execute_tracking([t for t in list_boxes if t.x + t.w < reference_x and t.y + t.h < reference_y], tracker1, tracker_indexes, cur_index)
             tracker2, tracker_indexes, cur_index = execute_tracking([t for t in list_boxes if t.x + t.w >= reference_x and t.y + t.h < reference_y], tracker2, tracker_indexes, cur_index)
             tracker3, tracker_indexes, cur_index = execute_tracking([t for t in list_boxes if t.y + t.h >= reference_y], tracker3, tracker_indexes, cur_index)
-            snapshot = EventsSnapshot()
 
-            for tracker in [tracker1, tracker2, tracker3]:
-                snapshot.add_events(compss_wait_on(populate_snapshot(tracker)))
+            federate_info(tracker1 + tracker2 + tracker3, i)
             if i % 5 == 0 and i != 0:
                 compss_barrier()
 
             i += 1
-            compss_barrier()
-            ids = compss_wait_on(snapshot.get_ids())
-            for obj_id in ids:
-                prediction = compss_wait_on(trajectory_pred_func(snapshot.get_by_id(obj_id).events))
-                snapshot.add_prediction(obj_id, prediction)
-                # print(f"Object Id={obj_id} Prediction={prediction}")
 
 
 def main():
