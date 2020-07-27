@@ -13,7 +13,12 @@ QUAD_REG_OFFSET = 5
 # @constraint(AppSoftware="yolo")
 @task(returns=list, listBoxes=IN, trackers=IN, tracker_indexes=IN, cur_index=IN)
 def execute_tracking(list_boxes, trackers, tracker_indexes, cur_index):
-    return track.track2(list_boxes, trackers, tracker_indexes, cur_index)
+    import pymap3d as pm
+    trackers, tracker_indexes, cur_index = track.track2(list_boxes, trackers, tracker_indexes, cur_index)
+    for tracker in trackers:
+        obj = tracker.traj[-1]
+        obj.x, obj.y, _ = pm.enu2geodetic(obj.x, obj.y, 0, 44.655540, 10.934315, 0)
+    return trackers, tracker_indexes, cur_index
 
 
 # @constraint(AppSoftware="yolo")
@@ -40,7 +45,6 @@ def receive_boxes():
         x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 2 + int_size + 1:])
         # print((coord_north, coord_east, frame_number, ord(obj_class), x, y, w, h))
         boxes.append(track.obj_m(x, y, frame_number, ord(obj_class), int(w), int(h)))
-    print(f"Found a total of {len(boxes)} boxes")
     return flag, boxes
 
 
@@ -78,7 +82,7 @@ def federate_info(trackers, count):
 
     from CityNS.classes import Event, Object, EventsSnapshot
     classes = ["person", "car", "truck", "bus", "motor", "bike", "rider", "traffic light", "traffic sign", "train"]
-    snapshot_alias = "unai_events_" + str(count)
+    snapshot_alias = "events_" + str(count)
     snapshot = EventsSnapshot(snapshot_alias)
     snapshot.make_persistent(alias=snapshot_alias)
 
@@ -91,7 +95,7 @@ def federate_info(trackers, count):
 
         event = Event(uuid.uuid4().int, int(datetime.now().timestamp() * 1000), lon, lat)
         print(f"Registering object alias {tracker.id}")
-        object_alias = "unai_obj_" + str(tracker.id)
+        object_alias = "obj_" + str(tracker.id)
         try:
             event_object = Object.get_by_alias(object_alias)
         except DataClayException as e:
@@ -133,7 +137,7 @@ def execute_trackers():
             tracker2, tracker_indexes, cur_index = compss_wait_on(execute_tracking([t for t in list_boxes if t.x + t.w >= reference_x and t.y + t.h < reference_y], tracker2, tracker_indexes, cur_index))
             tracker3, tracker_indexes, cur_index = compss_wait_on(execute_tracking([t for t in list_boxes if t.y + t.h >= reference_y], tracker3, tracker_indexes, cur_index))
 
-            dummy = compss_wait_on(federate_info(tracker1 + tracker2 + tracker3, i))
+            dummy = federate_info(tracker1 + tracker2 + tracker3, i)
             i += 1
             if i % 5 == 0:
                 compss_barrier()
