@@ -17,9 +17,9 @@ def pixel2GPS(x, y):
 
 
 # @constraint(AppSoftware="yolo")
-@task(returns=list, listBoxes=IN, trackers=IN, tracker_indexes=IN, cur_index=IN)
-def execute_tracking(list_boxes, trackers, tracker_indexes, cur_index):
-    return track.track2(list_boxes, trackers, tracker_indexes, cur_index)
+@task(returns=Tuple, list_boxes=IN, filter_fn=IN, trackers=IN, tracker_indexes=IN, cur_index=IN)
+def execute_tracking(list_boxes, filter_fn, trackers, tracker_indexes, cur_index):
+    return track.track2([t for t in list_boxes if filter_fn(t)], trackers, tracker_indexes, cur_index)
 
 
 # @constraint(AppSoftware="yolo")
@@ -30,7 +30,7 @@ def receive_boxes():
 
     context = zmq.Context()
     sink = context.socket(zmq.REP)
-    sink.connect("tcp://127.0.0.1:5559")  # tcp://172.0.0.1 for containerized executions
+    sink.connect("tcp://127.0.0.1:5558")  # tcp://172.0.0.1 for containerized executions
 
     double_size = 8
     int_size = float_size = 4
@@ -46,7 +46,7 @@ def receive_boxes():
         x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 2 + int_size + 1:])
         # print((coord_north, coord_east, frame_number, ord(obj_class), x, y, w, h))
         boxes.append(track.obj_m(x, y, frame_number, ord(obj_class), int(w), int(h)))
-    return flag, boxes
+    return boxes
 
 
 def print_trackers(tracker1, tracker2, tracker3):
@@ -84,10 +84,12 @@ def trigger_openwhisk(alias):
                              auth=(user_pass[0], user_pass[1]), verify=False)
 
 
-@task(returns=int, trackers=IN, count=IN)
-def federate_info(trackers, count):
+@task(returns=int, tracker1=COLLECTION_IN, tracker2=COLLECTION_IN, tracker3=COLLECTION_IN, count=IN, dummy=IN)
+def federate_info(tracker1, tracker2, tracker3, count, dummy):
     import uuid
     import os
+    # os.environ["DATACLAYSESSIONCONFIG"] = "/opt/cfgfiles/session.properties"
+    # os.environ["DATACLAYCLIENTCONFIG"] = "/opt/cfgfiles/client.properties"
     os.environ["DATACLAYSESSIONCONFIG"] = "/tmp/pycharm_project_225/cfgfiles/session.properties"
     os.environ["DATACLAYCLIENTCONFIG"] = "/tmp/pycharm_project_225/cfgfiles/client.properties"
     from dataclay.api import init, finish, register_dataclay
@@ -101,10 +103,12 @@ def federate_info(trackers, count):
     classes = ["person", "car", "truck", "bus", "motor", "bike", "rider", "traffic light", "traffic sign", "train"]
     snapshot_alias = "events_" + str(count)
     snapshot = EventsSnapshot(snapshot_alias)
+    print(f"Persisting {snapshot_alias}")
     snapshot.make_persistent(alias=snapshot_alias)
 
-    dataclay_cloud = register_dataclay("192.168.7.32", 11034)
-    for tracker in trackers:
+    # dataclay_cloud = register_dataclay("192.168.7.32", 11034)
+    trackers = tracker1 + tracker2 + tracker3
+    for index, tracker in enumerate(trackers):
         vel_pred = tracker.predList[-1].vel if len(tracker.predList) > 0 else -1.0
         yaw_pred = tracker.predList[-1].yaw if len(tracker.predList) > 0 else -1.0
         lat, lon = pixel2GPS(tracker.traj[-1].x, tracker.traj[-1].y)
@@ -113,11 +117,12 @@ def federate_info(trackers, count):
 
         event = Event(uuid.uuid4().int, int(datetime.now().timestamp() * 1000), float(lon), float(lat))
         print(f"Registering object alias {tracker.id}")
-        object_alias = "obj_" + str(tracker.id)
+        object_alias = "obj_" + str(index)
         try:
             event_object = Object.get_by_alias(object_alias)
         except DataClayException as e:
             event_object = Object(tracker.id, classes[tracker.cl], vel_pred, yaw_pred)
+            print(f"Persisting {object_alias}")
             event_object.make_persistent(alias=object_alias)
 
         event_object.add_event(event)
@@ -134,7 +139,7 @@ def federate_info(trackers, count):
         print(e)
     """
     # finish()
-    return count
+    return dummy
 
 
 def execute_trackers():
@@ -142,27 +147,37 @@ def execute_trackers():
     tracker2 = []
     tracker3 = []
 
-    tracker_indexes = []
-    cur_index = 0
+    tracker_indexes1 = []
+    tracker_indexes2 = []
+    tracker_indexes3 = []
+    cur_index1 = 0
+    cur_index2 = 0
+    cur_index3 = 0
 
-    video_resolution = (1920, 1080)  # TODO: RESOLUTION SHOULD NOT BE HARDCODED!
+    # video_resolution = (1920, 1080)  # TODO: RESOLUTION SHOULD NOT BE HARDCODED!
+    video_resolution = (3072, 1730)  # TODO: RESOLUTION SHOULD NOT BE HARDCODED!
     reference_x, reference_y = [r // 2 for r in video_resolution]
 
     i = 0
     dummy = 0
-    ret = True
-    while ret:
-        ret, list_boxes = compss_wait_on(receive_boxes())
+    while True:
+        list_boxes = receive_boxes()
 
-        if ret:
-            tracker1, tracker_indexes, cur_index = compss_wait_on(execute_tracking([t for t in list_boxes if t.x + t.w < reference_x and t.y + t.h < reference_y], tracker1, tracker_indexes, cur_index))
-            tracker2, tracker_indexes, cur_index = compss_wait_on(execute_tracking([t for t in list_boxes if t.x + t.w >= reference_x and t.y + t.h < reference_y], tracker2, tracker_indexes, cur_index))
-            tracker3, tracker_indexes, cur_index = compss_wait_on(execute_tracking([t for t in list_boxes if t.y + t.h >= reference_y], tracker3, tracker_indexes, cur_index))
+        trackers = tracker1 + tracker2 + tracker3
+        # tracker1, tracker_indexes1, cur_index1 = compss_wait_on(execute_tracking(list_boxes, lambda t: t.x + t.w < reference_x and t.y + t.h < reference_y, trackers, tracker_indexes1, cur_index1))
+        results1 = execute_tracking(list_boxes, lambda t: t.x + t.w < reference_x and t.y + t.h < reference_y, tracker1, tracker_indexes1, cur_index1)
+        results2 = execute_tracking(list_boxes, lambda t: t.x + t.w >= reference_x and t.y + t.h < reference_y, tracker2, tracker_indexes2, cur_index2)
+        results3 = execute_tracking(list_boxes, lambda t: t.y + t.h >= reference_y, tracker3, tracker_indexes3, cur_index3)
 
-            dummy = federate_info(tracker1 + tracker2 + tracker3, i)
-            i += 1
-            if i % 5 == 0:
-                compss_barrier()
+        tracker1, tracker_indexes1, cur_index1 = compss_wait_on(results1)
+        tracker2, tracker_indexes2, cur_index2 = compss_wait_on(results2)
+        tracker3, tracker_indexes3, cur_index3 = compss_wait_on(results3)
+        dummy = federate_info(tracker1, tracker2, tracker3, i, compss_wait_on(dummy))
+        # The dummy variable enforces dependency between federate_info tasks
+
+        i += 1
+        if i % 5 == 0:
+            compss_barrier()
 
 
 def main():
