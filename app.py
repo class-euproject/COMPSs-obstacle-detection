@@ -10,15 +10,16 @@ QUAD_REG_LEN = 20
 QUAD_REG_OFFSET = 5
 
 
+def pixel2GPS(x, y):
+    import pymap3d as pm
+    lat, lon, _ = pm.enu2geodetic(x, y, 0, 44.655540, 10.934315, 0)
+    return lat, lon
+
+
 # @constraint(AppSoftware="yolo")
 @task(returns=list, listBoxes=IN, trackers=IN, tracker_indexes=IN, cur_index=IN)
 def execute_tracking(list_boxes, trackers, tracker_indexes, cur_index):
-    import pymap3d as pm
-    trackers, tracker_indexes, cur_index = track.track2(list_boxes, trackers, tracker_indexes, cur_index)
-    for tracker in trackers:
-        obj = tracker.traj[-1]
-        obj.x, obj.y, _ = pm.enu2geodetic(obj.x, obj.y, 0, 44.655540, 10.934315, 0)
-    return trackers, tracker_indexes, cur_index
+    return track.track2(list_boxes, trackers, tracker_indexes, cur_index)
 
 
 # @constraint(AppSoftware="yolo")
@@ -69,6 +70,20 @@ def print_trackers(tracker1, tracker2, tracker3):
                   " Predicted Yaw: " + str(yaw_pred))
 
 
+def trigger_openwhisk(alias):
+    import requests
+    APIHOST = 'https://192.168.7.40:31001'
+    AUTH_KEY = '23bc46b1-71f6-4ed5-8c54-816aa4f8c502:123zO3xZCLrMN6v2BKK1dXYFpXlPkccOFqm12CdAsMgRU4VrNZ9lyGVCGuMDGIwP'
+    NAMESPACE = '_'
+    BLOCKING = 'true'
+    RESULT = 'true'
+    TRIGGER = 'tp-trigger'
+    url = APIHOST + '/api/v1/namespaces/' + NAMESPACE + '/triggers/' + TRIGGER
+    user_pass = AUTH_KEY.split(':')
+    requests.post(url, params={'blocking': BLOCKING, 'result': RESULT}, json={"ALIAS": str(alias)},
+                             auth=(user_pass[0], user_pass[1]), verify=False)
+
+
 @task(returns=int, trackers=IN, count=IN)
 def federate_info(trackers, count):
     import uuid
@@ -80,7 +95,9 @@ def federate_info(trackers, count):
     # init("/tmp/pycharm_project_225/cfgfiles/session.properties")
     init()
 
-    from CityNS.classes import Event, Object, EventsSnapshot
+    from CityNS.classes import Event, Object, EventsSnapshot, DKB
+    kb = DKB.get_by_alias("DKB")
+
     classes = ["person", "car", "truck", "bus", "motor", "bike", "rider", "traffic light", "traffic sign", "train"]
     snapshot_alias = "events_" + str(count)
     snapshot = EventsSnapshot(snapshot_alias)
@@ -90,10 +107,11 @@ def federate_info(trackers, count):
     for tracker in trackers:
         vel_pred = tracker.predList[-1].vel if len(tracker.predList) > 0 else -1.0
         yaw_pred = tracker.predList[-1].yaw if len(tracker.predList) > 0 else -1.0
-        lat = tracker.traj[-1].x
-        lon = tracker.traj[-1].y
+        lat, lon = pixel2GPS(tracker.traj[-1].x, tracker.traj[-1].y)
+        # lat = tracker.traj[-1].x
+        # lon = tracker.traj[-1].y
 
-        event = Event(uuid.uuid4().int, int(datetime.now().timestamp() * 1000), lon, lat)
+        event = Event(uuid.uuid4().int, int(datetime.now().timestamp() * 1000), float(lon), float(lat))
         print(f"Registering object alias {tracker.id}")
         object_alias = "obj_" + str(tracker.id)
         try:
@@ -103,14 +121,18 @@ def federate_info(trackers, count):
             event_object.make_persistent(alias=object_alias)
 
         event_object.add_event(event)
-        event_object.federate(dataclay_cloud)
+        # event_object.federate(dataclay_cloud)
         snapshot.add_object_refs(object_alias)
 
+    kb.add_events_snapshot(snapshot)
+    trigger_openwhisk(snapshot_alias)
+
+    """
     try:
         snapshot.federate(dataclay_cloud)
-        pass
     except DataClayException as e:
         print(e)
+    """
     # finish()
     return count
 
