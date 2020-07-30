@@ -1,0 +1,2 @@
+prometheus.endpoint=localhost:9091
+heuristics.inputfile=/home/eudald/class_app/config/class_app.dat

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<ResourcesList>
+	<ComputeNode Name="192.168.50.103">
+        <Processor Name="MainProcessor">
+            <ComputingUnits>1</ComputingUnits>
+        </Processor>
+        <Adaptors>
+            <Adaptor Name="es.bsc.compss.nio.master.NIOAdaptor">
+                <SubmissionSystem>
+                    <Interactive/>
+                </SubmissionSystem>
+                <Ports>
+                    <MinPort>43001</MinPort>
+                    <MaxPort>43002</MaxPort>
+                </Ports>
+            </Adaptor>
+    	</Adaptors>
+    	<Software>
+              <Application>yolo</Application>
+              <Application>track1</Application>
+        </Software>
+</ComputeNode>
+<ComputeNode Name="192.168.50.102">
+        <Processor Name="MainProcessor">
+            <ComputingUnits>1</ComputingUnits>
+        </Processor>
+        <Adaptors>
+            <Adaptor Name="es.bsc.compss.nio.master.NIOAdaptor">
+                <SubmissionSystem>
+                    <Interactive/>
+                </SubmissionSystem>
+                <Ports>
+                    <MinPort>43001</MinPort>
+                    <MaxPort>43002</MaxPort>
+                </Ports>
+            </Adaptor>
+        </Adaptors>
+    	<Software>
+              <Application>track2</Application>
+        </Software>
+</ComputeNode>
+<ComputeNode Name="192.168.50.167">
+        <Processor Name="MainProcessor">
+            <ComputingUnits>1</ComputingUnits>
+        </Processor>
+        <Adaptors>
+            <Adaptor Name="es.bsc.compss.nio.master.NIOAdaptor">
+                <SubmissionSystem>
+                    <Interactive/>
+                </SubmissionSystem>
+                <Ports>
+                    <MinPort>43001</MinPort>
+                    <MaxPort>43002</MaxPort>
+                </Ports>
+            </Adaptor>
+        </Adaptors>
+    	<Software>
+              <Application>track3</Application>
+        </Software>
+</ComputeNode>
+</ResourcesList>
