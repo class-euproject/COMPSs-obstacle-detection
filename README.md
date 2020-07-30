@@ -49,6 +49,24 @@ git submodule init
 git submodule update
 ```
 
+### Compile tracker\_CLASS
+
+To compile the `tracker\_CLASS` component, go to the ''./tracker\_CLASS/ folder after initializing the submodule and use the following commands:
+
+```
+mkdir build
+cd build
+cmake ../
+make
+```
+
+The previous steps will generate a `track.cpython-36m-aarch64-linux-gnu.so`. Use the following command to move the tracker executable next to the COMPSs Obstacle Detection application:
+
+```
+mv track.cpython-36m-aarch64-linux-gnu.so ../../track.so
+```
+
+
 ### Update configuration files
 
 The dataClay configuration file `./cfgfiles/client.properties` must be updated. The `HOST=${IP}` variable should be replaced to point to the IP address of your cloud.
