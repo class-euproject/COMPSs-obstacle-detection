@@ -51,7 +51,7 @@ git submodule update
 
 ### Compile tracker\_CLASS
 
-To compile the `tracker\_CLASS` component, go to the ''./tracker\_CLASS/ folder after initializing the submodule and use the following commands:
+To compile the `tracker\_CLASS` component, go to the `./tracker\_CLASS/` folder after initializing the submodule and use the following commands:
 
 ```
 mkdir build
