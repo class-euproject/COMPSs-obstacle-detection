@@ -38,6 +38,15 @@ Download and install [trajectory prediction](https://github.com/class-euproject/
 Download and install [collision detection](https://github.com/class-euproject/collision-detection) at the **Cloud resource**, installation and execution instructions are available at the repository from the link.
 
 
+### Python dependencies
+
+The application has been developed and tested with `Python 3.6.8`. The following python packages must be installed as well:
+
+```
+python3 -m pip install dataclay, pymap3d, zmq, struct, requests
+```
+
+
 ## Execution
 
 ### Pull submodules
@@ -51,7 +60,7 @@ git submodule update
 
 ### Compile tracker\_CLASS
 
-To compile the `tracker\_CLASS` component, go to the `./tracker\_CLASS/` folder after initializing the submodule and use the following commands:
+To compile the `tracker_CLASS` component, go to the `./tracker_CLASS/` folder after initializing the submodule and use the following commands:
 
 ```
 mkdir build
@@ -60,10 +69,10 @@ cmake ../
 make
 ```
 
-The previous steps will generate a `track.cpython-36m-aarch64-linux-gnu.so`. Use the following command to move the tracker executable next to the COMPSs Obstacle Detection application:
+The previous steps will generate an executable with a name similar to `track.cpython-36m-aarch64-linux-gnu.so`. Use the following command to move the tracker executable next to the COMPSs Obstacle Detection application:
 
 ```
-mv track.cpython-36m-aarch64-linux-gnu.so ../../track.so
+mv track*.so ../../track.so
 ```
 
 
