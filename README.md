@@ -88,7 +88,7 @@ Moreover, the COMPSs configuration files `project.xml` and `resources.xml` are u
 To launch the application use the following script:
 
 ```
-runcompss --lang=python --project=config/project.xml --resources=config/resources.xml --cpu_affinity=disabled --python_interpreter=python3 --scheduler="es.bsc.compss.scheduler.paper.PaperScheduler" --scheduler_config_file=config/sched.config app.py
+runcompss --lang=python --project=config/project.xml --resources=config/resources.xml --cpu_affinity=disabled --python_interpreter=python3 --scheduler="es.bsc.compss.scheduler.rtheuristics.RTHeuristicsScheduler" --scheduler_config_file=config/sched.config app.py
 ```
 
 NOTE: To remind again that the application relies on the **tkDNN** component being up and running on the **edge** resource, and **dataClay** and **Pywren** components being up and running on the **Cloud** resource. Follow the instructions to execute the different components in their respective repositories.

@@ -23,7 +23,7 @@ def execute_tracking(list_boxes, filter_fn, trackers, tracker_indexes, cur_index
 
 
 # @constraint(AppSoftware="yolo")
-@task(returns=Tuple[bool, list],)
+@task(returns=list,)
 def receive_boxes():
     import zmq
     import struct
@@ -163,7 +163,6 @@ def execute_trackers():
     while True:
         list_boxes = receive_boxes()
 
-        trackers = tracker1 + tracker2 + tracker3
         # tracker1, tracker_indexes1, cur_index1 = compss_wait_on(execute_tracking(list_boxes, lambda t: t.x + t.w < reference_x and t.y + t.h < reference_y, trackers, tracker_indexes1, cur_index1))
         results1 = execute_tracking(list_boxes, lambda t: t.x + t.w < reference_x and t.y + t.h < reference_y, tracker1, tracker_indexes1, cur_index1)
         results2 = execute_tracking(list_boxes, lambda t: t.x + t.w >= reference_x and t.y + t.h < reference_y, tracker2, tracker_indexes2, cur_index2)
