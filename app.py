@@ -30,7 +30,7 @@ def receive_boxes():
 
     context = zmq.Context()
     sink = context.socket(zmq.REP)
-    sink.connect("tcp://127.0.0.1:5558")  # tcp://172.0.0.1 for containerized executions
+    sink.connect("tcp://127.0.0.1:5559")  # tcp://172.0.0.1 for containerized executions
 
     double_size = 8
     int_size = float_size = 4

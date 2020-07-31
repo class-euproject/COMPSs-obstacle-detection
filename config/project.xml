@@ -1,29 +1,13 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Project>
     <MasterNode/>
-    <ComputeNode Name="192.168.50.103">
+    <ComputeNode Name="IP1">
         <InstallDir>/opt/COMPSs/</InstallDir>
         <WorkingDir>/tmp/COMPSsWorker/</WorkingDir>
-        <User>eudald</User>
+	<User>USER1</User>
         <Application>
-		<Pythonpath>/home/eudald/class_app/</Pythonpath>
+		<Pythonpath>PATH1</Pythonpath>
         </Application>
-</ComputeNode>
-<ComputeNode Name="192.168.50.102">
-        <InstallDir>/opt/COMPSs/</InstallDir>
-        <WorkingDir>/tmp/COMPSsWorker/</WorkingDir>
-        <User>eudald</User>
-	<Application>
-		<Pythonpath>/home/eudald/COMPSs-obstacle-detection/</Pythonpath>
-        </Application>
-</ComputeNode>
-    <ComputeNode Name="192.168.50.167">
-        <InstallDir>/opt/COMPSs/</InstallDir>
-        <WorkingDir>/tmp/COMPSsWorker/</WorkingDir>
-        <User>eudald</User>
-        <Application>
-		<Pythonpath>/home/eudald/COMPSs-obstacle-detection/</Pythonpath>
-        </Application>
-</ComputeNode>
+    </ComputeNode>
 </Project>
 

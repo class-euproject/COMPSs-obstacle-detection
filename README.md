@@ -35,7 +35,7 @@ Download and install [trajectory prediction](https://github.com/class-euproject/
 
 ### Collision Detection
 
-Download and install [collision detection](https://github.com/class-euproject/collision-detection) at the **Cloud resource**, installation and execution instructions are available at the repository from the link.
+Download and install [collision detection](https://github.com/class-euproject/collision-detection) at the **Cloud resource**, installation and execution instructions are available at the repository from the link. This component is **not** required in order to execute the COMPSs Obstacle Detection application.
 
 
 ### Python dependencies
@@ -43,11 +43,11 @@ Download and install [collision detection](https://github.com/class-euproject/co
 The application has been developed and tested with `Python 3.6.8`. The following python packages must be installed as well:
 
 ```
-python3 -m pip install dataclay, pymap3d, zmq, struct, requests
+python3 -m pip install dataclay pymap3d zmq struct requests
 ```
 
 
-## Execution
+## Installation
 
 ### Pull submodules
 
@@ -78,17 +78,17 @@ mv track*.so ../../track.so
 
 ### Update configuration files
 
-The dataClay configuration file `./cfgfiles/client.properties` must be updated. The `HOST=${IP}` variable should be replaced to point to the IP address of your cloud.
+The dataClay configuration file `./cfgfiles/client.properties` must be updated. The `HOST=${CLOUD_IP}` variable should be replaced to point to the IP address of your cloud.
 
-Moreover, the COMPSs configuration files `project.xml` and `resources.xml` can be found in `./config/`. In the example files being provided 3 computing resources are being considered, but these files should be updated by replacing the IP addresses and the usernames by the ones of the computing resources being used.
+Moreover, the COMPSs configuration files `project.xml` and `resources.xml` are used to define the computing resources that will be used to execute the tasks composing this application, which can be found in `./config/`. These files should be updated by replacing the IP address **IP1** for the actual IP address of your computing resource, the username **USER1** and the **PATH1** for the current absolute path to where the `app.py` is located inside your computing resource. For each computing resource that is going to be used, you need to add the `<ComputeNode>` XML tag with the required information described above.
 
 
-### Launch the application
+## Execution 
 
 To launch the application use the following script:
 
 ```
-./launch_app.sh
+runcompss --lang=python --project=config/project.xml --resources=config/resources.xml --cpu_affinity=disabled --python_interpreter=python3 --scheduler="es.bsc.compss.scheduler.paper.PaperScheduler" --scheduler_config_file=config/sched.config app.py
 ```
 
-NOTE: To remind again that the application relies on the **tkDNN** component being up and running on the **edge** resource, and **dataClay**, **Pywren** and **Trajectory Prediction** components being up and running on the **Cloud** resource.
+NOTE: To remind again that the application relies on the **tkDNN** component being up and running on the **edge** resource, and **dataClay** and **Pywren** components being up and running on the **Cloud** resource. Follow the instructions to execute the different components in their respective repositories.
