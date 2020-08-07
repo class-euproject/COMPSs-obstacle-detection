@@ -2,12 +2,8 @@ from pycompss.api.parameter import *
 from pycompss.api.task import task
 from pycompss.api.api import compss_barrier, compss_wait_on
 from collections import deque
-from typing import Tuple, List
 import track
 from datetime import datetime
-
-QUAD_REG_LEN = 20
-QUAD_REG_OFFSET = 5
 
 
 def pixel2GPS(x, y):
@@ -17,13 +13,13 @@ def pixel2GPS(x, y):
 
 
 # @constraint(AppSoftware="yolo")
-@task(returns=Tuple, list_boxes=IN, filter_fn=IN, trackers=IN, tracker_indexes=IN, cur_index=IN)
+@task(returns=3, list_boxes=IN, filter_fn=IN, trackers=IN, tracker_indexes=IN, cur_index=IN)
 def execute_tracking(list_boxes, filter_fn, trackers, tracker_indexes, cur_index):
     return track.track2([t for t in list_boxes if filter_fn(t)], trackers, tracker_indexes, cur_index)
 
 
 # @constraint(AppSoftware="yolo")
-@task(returns=Tuple[bool, list],)
+@task(returns=list,)
 def receive_boxes():
     import zmq
     import struct
@@ -84,7 +80,7 @@ def trigger_openwhisk(alias):
                              auth=(user_pass[0], user_pass[1]), verify=False)
 
 
-@task(returns=int, tracker1=COLLECTION_IN, tracker2=COLLECTION_IN, tracker3=COLLECTION_IN, count=IN, dummy=IN)
+@task(returns=int, tracker1=IN, tracker2=IN, tracker3=IN, count=IN, dummy=IN)
 def federate_info(tracker1, tracker2, tracker3, count, dummy):
     import uuid
     import os
@@ -160,19 +156,14 @@ def execute_trackers():
 
     i = 0
     dummy = 0
-    while True:
+    while 1:
         list_boxes = receive_boxes()
 
-        trackers = tracker1 + tracker2 + tracker3
-        # tracker1, tracker_indexes1, cur_index1 = compss_wait_on(execute_tracking(list_boxes, lambda t: t.x + t.w < reference_x and t.y + t.h < reference_y, trackers, tracker_indexes1, cur_index1))
-        results1 = execute_tracking(list_boxes, lambda t: t.x + t.w < reference_x and t.y + t.h < reference_y, tracker1, tracker_indexes1, cur_index1)
-        results2 = execute_tracking(list_boxes, lambda t: t.x + t.w >= reference_x and t.y + t.h < reference_y, tracker2, tracker_indexes2, cur_index2)
-        results3 = execute_tracking(list_boxes, lambda t: t.y + t.h >= reference_y, tracker3, tracker_indexes3, cur_index3)
+        tracker1, tracker_indexes1, cur_index1 = execute_tracking(list_boxes, lambda t: t.x + t.w < reference_x and t.y + t.h < reference_y, tracker1, tracker_indexes1, cur_index1)
+        tracker2, tracker_indexes2, cur_index2 = execute_tracking(list_boxes, lambda t: t.x + t.w >= reference_x and t.y + t.h < reference_y, tracker2, tracker_indexes2, cur_index2)
+        tracker3, tracker_indexes3, cur_index3 = execute_tracking(list_boxes, lambda t: t.y + t.h >= reference_y, tracker3, tracker_indexes3, cur_index3)
 
-        tracker1, tracker_indexes1, cur_index1 = compss_wait_on(results1)
-        tracker2, tracker_indexes2, cur_index2 = compss_wait_on(results2)
-        tracker3, tracker_indexes3, cur_index3 = compss_wait_on(results3)
-        dummy = federate_info(tracker1, tracker2, tracker3, i, compss_wait_on(dummy))
+        dummy = federate_info(tracker1, tracker2, tracker3, i, dummy)
         # The dummy variable enforces dependency between federate_info tasks
 
         i += 1
