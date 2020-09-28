@@ -1,15 +1,9 @@
 from pycompss.api.parameter import *
 from pycompss.api.task import task
 from pycompss.api.api import compss_barrier, compss_wait_on
-from collections import deque
+from utils import pixel2GPS
 import track
 from datetime import datetime
-
-
-def pixel2GPS(x, y):
-    import pymap3d as pm
-    lat, lon, _ = pm.enu2geodetic(x, y, 0, 44.655540, 10.934315, 0)
-    return lat, lon
 
 
 # @constraint(AppSoftware="yolo")
@@ -20,13 +14,17 @@ def execute_tracking(list_boxes, filter_fn, trackers, tracker_indexes, cur_index
 
 # @constraint(AppSoftware="yolo")
 @task(returns=list,)
-def receive_boxes():
+def receive_boxes(socket_ip):
     import zmq
     import struct
 
+    if not ":" in socket_ip:
+        socket_ip += ":5559"
+
     context = zmq.Context()
     sink = context.socket(zmq.REP)
-    sink.connect("tcp://127.0.0.1:5559")  # tcp://172.0.0.1 for containerized executions
+    # sink.connect("tcp://127.0.0.1:5559")
+    sink.connect(f"tcp://{socket_ip}")  # tcp://172.0.0.1 for containerized executions
 
     double_size = 8
     int_size = float_size = 4
@@ -44,53 +42,10 @@ def receive_boxes():
         boxes.append(track.obj_m(x, y, frame_number, ord(obj_class), int(w), int(h)))
     return boxes
 
-
-def print_trackers(tracker1, tracker2, tracker3):
-    trackers = [tracker1, tracker2, tracker3]
-    for i, ts in enumerate(trackers):
-        print("Objects from TRACKER " + str(i))
-        for l in ts:
-            x = l.traj_[-1].x_
-            y = l.traj_[-1].y_
-            x_pixel = l.traj_[-1].x_pixel_
-            y_pixel = l.traj_[-1].y_pixel_
-            if len(l.pred_list_) > 0:
-                vel_pred = l.pred_list_[-1].vel_
-                yaw_pred = l.pred_list_[-1].yaw_
-            else:
-                vel_pred = "unknown"
-                yaw_pred = "unknown"
-
-            print("Object class: " + str(l.class_) + " Geolocation: (" + str(x) + ", " + str(y) + ") ID: " + str(l.id_)
-                  + " Pixel Position: " + str(x_pixel) + ", " + str(y_pixel) + " Speed predicted: " + str(vel_pred) +
-                  " Predicted Yaw: " + str(yaw_pred))
-
-
-def trigger_openwhisk(alias):
-    import requests
-    APIHOST = 'https://192.168.7.40:31001'
-    AUTH_KEY = '23bc46b1-71f6-4ed5-8c54-816aa4f8c502:123zO3xZCLrMN6v2BKK1dXYFpXlPkccOFqm12CdAsMgRU4VrNZ9lyGVCGuMDGIwP'
-    NAMESPACE = '_'
-    BLOCKING = 'true'
-    RESULT = 'true'
-    TRIGGER = 'tp-trigger'
-    url = APIHOST + '/api/v1/namespaces/' + NAMESPACE + '/triggers/' + TRIGGER
-    user_pass = AUTH_KEY.split(':')
-    requests.post(url, params={'blocking': BLOCKING, 'result': RESULT}, json={"ALIAS": str(alias)},
-                             auth=(user_pass[0], user_pass[1]), verify=False)
-
-
-@task(returns=int, tracker1=IN, tracker2=IN, tracker3=IN, count=IN, dummy=IN)
-def federate_info(tracker1, tracker2, tracker3, count, dummy):
+#@task(returns=2, trackers=IN, count=IN, dummy=IN)
+def persist_info(trackers, count, dummy):
     import uuid
-    import os
-    # os.environ["DATACLAYSESSIONCONFIG"] = "/opt/cfgfiles/session.properties"
-    # os.environ["DATACLAYCLIENTCONFIG"] = "/opt/cfgfiles/client.properties"
-    os.environ["DATACLAYSESSIONCONFIG"] = "/tmp/pycharm_project_225/cfgfiles/session.properties"
-    os.environ["DATACLAYCLIENTCONFIG"] = "/tmp/pycharm_project_225/cfgfiles/client.properties"
-    from dataclay.api import init, finish, register_dataclay
     from dataclay.exceptions.exceptions import DataClayException
-    # init("/tmp/pycharm_project_225/cfgfiles/session.properties")
     init()
 
     from CityNS.classes import Event, Object, EventsSnapshot, DKB
@@ -101,15 +56,13 @@ def federate_info(tracker1, tracker2, tracker3, count, dummy):
     snapshot = EventsSnapshot(snapshot_alias)
     print(f"Persisting {snapshot_alias}")
     snapshot.make_persistent(alias=snapshot_alias)
+    objects = []
 
     # dataclay_cloud = register_dataclay("192.168.7.32", 11034)
-    trackers = tracker1 + tracker2 + tracker3
     for index, tracker in enumerate(trackers):
         vel_pred = tracker.predList[-1].vel if len(tracker.predList) > 0 else -1.0
         yaw_pred = tracker.predList[-1].yaw if len(tracker.predList) > 0 else -1.0
         lat, lon = pixel2GPS(tracker.traj[-1].x, tracker.traj[-1].y)
-        # lat = tracker.traj[-1].x
-        # lon = tracker.traj[-1].y
 
         event = Event(uuid.uuid4().int, int(datetime.now().timestamp() * 1000), float(lon), float(lat))
         print(f"Registering object alias {tracker.id}")
@@ -124,9 +77,10 @@ def federate_info(tracker1, tracker2, tracker3, count, dummy):
         event_object.add_event(event)
         # event_object.federate(dataclay_cloud)
         snapshot.add_object_refs(object_alias)
+        objects.append(event_object)
 
     kb.add_events_snapshot(snapshot)
-    trigger_openwhisk(snapshot_alias)
+    # trigger_openwhisk(snapshot_alias)
 
     """
     try:
@@ -134,21 +88,48 @@ def federate_info(tracker1, tracker2, tracker3, count, dummy):
     except DataClayException as e:
         print(e)
     """
-    # finish()
-    return dummy
+    return dummy, objects, snapshot
 
 
-def execute_trackers():
+@task(snapshot=IN)
+def federate_info(snapshot):
+    from dataclay.api import get_dataclay_id
+    from dataclay.exceptions.exceptions import DataClayException
+    from CityNS.classes import Object
+
+    print(f"Starting federation of snapshot {snapshot.snap_alias}")
+    federation_ip, federation_port = "192.168.170.103", 11034
+    dataclay_to_federate = get_dataclay_id(federation_ip, federation_port)
+    for obj_alias in snapshot.objects_refs:
+        object = Object.get_by_alias(obj_alias)
+        if len(object.get_federation_targets() or []) == 0:
+            try:
+                object.federate(dataclay_to_federate)
+                print(f"Federation of object {obj_alias} was successful")
+            except KeyboardInterrupt as e:
+                raise e
+            except DataClayException as e:
+                print(f"Federation of object {obj_alias} failed")
+                print(e.args[0])
+        try:
+            object.events_history[-1].federate(dataclay_to_federate)
+            print(f"Federation of last event of object {obj_alias} was successful")
+        except KeyboardInterrupt as e:
+            raise e
+        except DataClayException as e:
+            print(f"Federation of last event of object {obj_alias} failed")
+            print(e.args[0])
+    snapshot.federate(dataclay_to_federate)
+    print("Finished federation")
+
+
+def execute_single_tracker(socket_ip):
     tracker1 = []
     tracker2 = []
     tracker3 = []
 
-    tracker_indexes1 = []
-    tracker_indexes2 = []
-    tracker_indexes3 = []
-    cur_index1 = 0
-    cur_index2 = 0
-    cur_index3 = 0
+    tracker_indexes = []
+    cur_index = 0
 
     # video_resolution = (1920, 1080)  # TODO: RESOLUTION SHOULD NOT BE HARDCODED!
     video_resolution = (3072, 1730)  # TODO: RESOLUTION SHOULD NOT BE HARDCODED!
@@ -156,14 +137,31 @@ def execute_trackers():
 
     i = 0
     dummy = 0
-    while 1:
-        list_boxes = receive_boxes()
+    # while 1:
+    while i < 20:
+        list_boxes = receive_boxes(socket_ip)
 
-        tracker1, tracker_indexes1, cur_index1 = execute_tracking(list_boxes, lambda t: t.x + t.w < reference_x and t.y + t.h < reference_y, tracker1, tracker_indexes1, cur_index1)
-        tracker2, tracker_indexes2, cur_index2 = execute_tracking(list_boxes, lambda t: t.x + t.w >= reference_x and t.y + t.h < reference_y, tracker2, tracker_indexes2, cur_index2)
-        tracker3, tracker_indexes3, cur_index3 = execute_tracking(list_boxes, lambda t: t.y + t.h >= reference_y, tracker3, tracker_indexes3, cur_index3)
+        tracker1, _, _ = execute_tracking(list_boxes, lambda t: t.x + t.w < reference_x and t.y + t.h < reference_y,
+                                          tracker1, tracker_indexes, cur_index)
+        tracker2, _, _ = execute_tracking(list_boxes, lambda t: t.x + t.w >= reference_x and t.y + t.h < reference_y,
+                                          tracker2, tracker_indexes, cur_index)
+        tracker3, _, _ = execute_tracking(list_boxes, lambda t: t.y + t.h >= reference_y, tracker3, tracker_indexes,
+                                          cur_index)
 
-        dummy = federate_info(tracker1, tracker2, tracker3, i, dummy)
+        tracker1 = compss_wait_on(tracker1)
+        tracker2 = compss_wait_on(tracker2)
+        tracker3 = compss_wait_on(tracker3)
+        trackers = []
+        prev_cur_index = cur_index
+        for tracker in tracker1 + tracker2 + tracker3:
+            if tracker.id >= prev_cur_index:
+                tracker.id = cur_index
+                cur_index += 1
+            trackers.append(tracker)
+        tracker_indexes = [True] * cur_index + [False] * (32767 - cur_index)
+
+        dummy, objects, snapshot = persist_info(trackers, i, dummy)
+        federate_info(snapshot)
         # The dummy variable enforces dependency between federate_info tasks
 
         i += 1
@@ -174,13 +172,23 @@ def execute_trackers():
 def main():
     import sys
     import time
+    from dataclay.api import init, register_dataclay, finish
+    from dataclay.exceptions.exceptions import DataClayException
+
+    init()
+    from CityNS.classes import DKB
+    # register_dataclay("192.168.7.32", 11034)
+    try:
+        DKB.get_by_alias("DKB")
+    except DataClayException:
+        DKB().make_persistent("DKB")
 
     start_time = time.time()
     execute_trackers()
     print("ExecTime: " + str(time.time() - start_time))
 
     print("Exiting Application...")
-    sys.exit(0)
+    finish()
 
 
 if __name__ == "__main__":
