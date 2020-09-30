@@ -14,12 +14,12 @@ def execute_tracking(list_boxes, trackers, tracker_indexes, cur_index):
 
 
 # @constraint(AppSoftware="yolo")
-@task(returns=list,)
+@task(returns=2,)
 def receive_boxes(socket_ip):
     import zmq
     import struct
 
-    if not ":" in socket_ip:
+    if ":" not in socket_ip:
         socket_ip += ":5559"
 
     context = zmq.Context()
@@ -34,14 +34,15 @@ def receive_boxes(socket_ip):
     message = sink.recv()
     sink.send_string("")
     flag = len(message) > 0
+    cam_id = struct.unpack_from("i", message[1:1 + int_size])[0]
 
-    for offset in range(1, len(message), double_size * 2 + int_size + 1 + float_size * 4):
+    for offset in range(1 + int_size, len(message), double_size * 2 + int_size + 1 + float_size * 4):
         coord_north, coord_east, frame_number, obj_class = struct.unpack_from('ddIc', message[
                                                                                       offset:offset + double_size * 2 + int_size + 1])
         x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 2 + int_size + 1:])
         # print((coord_north, coord_east, frame_number, ord(obj_class), x, y, w, h))
         boxes.append(track.obj_m(x, y, frame_number, ord(obj_class), int(w), int(h)))
-    return boxes
+    return cam_id, boxes
 
 
 @task(returns=3,)
@@ -58,38 +59,26 @@ def merge_tracker_state(trackers_list, cur_index):
     return trackers, tracker_indexes, cur_index
 
 
-@task(trackers_list=IN)
+@task(trackers_list=COLLECTION_IN)
 def deduplicate(trackers_list):
-    from utils import category_parse
-    messages = []
-    for t_list in trackers_list:
-        message = dd.MasaMessage()
-        road_users = []
-        for tracker in t_list:
-            road_user = dd.RoadUser()
-            category = category_parse(tracker.cl)
-            if category is None:
-                continue
-            road_user.category = category
-            road_user.latitude, road_user.longitude = pixel2GPS(tracker.traj[-1].x, tracker.traj[-1].y)
-            # road_user.speed = min(abs(int(tracker.traj[-1].vel * 3.6 * 2)), 255)
-            # From the C++ code -> uint8_t velocity = uint8_t(std::abs(vel * 3.6 * 2));
-            # road_user.orientation = int((int(tracker.predList[-1].yaw * 57.29 + 360) % 360) * 17 / 24)
-            # From the C++ code -> uint8_t orientation = uint8_t((int((yaw * 57.29 + 360)) % 360) * 17 / 24);
-            road_users.append(road_user)
-        message.objects = road_users
-        message.num_objects = len(road_users)
-        message.t_stamp_ms = int(datetime.now().timestamp())
-        messages.append(message)
-    return_message = dd.compute_deduplicator(messages)
-    print(f"Returned {return_message.num_objects} objects (from the original "
+    return_message = dd.compute_deduplicator(trackers_list)
+    print(f"Returned {len(return_message)} objects (from the original "
           f"{' + '.join([str(len(t)) for t in trackers_list])} = {sum([len(t) for t in trackers_list])})")
     return return_message
+
+
+def dump(id_cam, trackers):
+    import pygeohash as pgh
+    for tracker in trackers:
+        lat, lon = pixel2GPS(tracker.traj[-1].x, tracker.traj[-1].y)
+        geohash = pgh.encode(lat, lon)
+        print(f"{id_cam} {int(datetime.now().timestamp() * 1000)} {tracker.cl} {lat} {lon} {geohash} 0 0 {tracker.id}")
 
 
 @task(returns=2, trackers=IN, count=IN, dummy=IN)
 def persist_info(trackers, count, dummy):
     import uuid
+    import pygeohash as pgh
     from dataclay.exceptions.exceptions import DataClayException
 
     from CityNS.classes import Event, Object, EventsSnapshot, DKB
@@ -107,23 +96,26 @@ def persist_info(trackers, count, dummy):
         yaw_pred = tracker.predList[-1].yaw if len(tracker.predList) > 0 else -1.0
         lat, lon = pixel2GPS(tracker.traj[-1].x, tracker.traj[-1].y)
 
-        event = Event(uuid.uuid4().int, int(datetime.now().timestamp() * 1000), float(lon), float(lat))
         print(f"Registering object alias {tracker.id}")
         object_alias = "obj_" + str(index)
         try:
             event_object = Object.get_by_alias(object_alias)
-        except DataClayException as e:
+            # event_object.speed = vel_pred
+            # event_object.yaw = yaw_pred
+        except DataClayException:
             event_object = Object(tracker.id, classes[tracker.cl], vel_pred, yaw_pred)
             print(f"Persisting {object_alias}")
             event_object.make_persistent(alias=object_alias)
 
+        geohash = pgh.encode(lat, lon)
+        event = Event(uuid.uuid4().int, event_object, int(datetime.now().timestamp() * 1000), float(lon), float(lat), geohash)
         event_object.add_event(event)
         snapshot.add_object_refs(object_alias)
         objects.append(event_object)
 
     kb.add_events_snapshot(snapshot)
     # trigger_openwhisk(snapshot_alias)
-    return dummy, objects, snapshot
+    return dummy, snapshot
 
 
 @task(snapshot=IN)
@@ -171,21 +163,24 @@ def execute_trackers(socket_ips):
     i = 0
     dummy = 0
     # while 1:
-    while i < 20:
+    while i < 40:
         for index, socket_ip in enumerate(socket_ips):
-            list_boxes = receive_boxes(socket_ip)
+            cam_id, list_boxes = receive_boxes(socket_ip)
             trackers_list[index], tracker_indexes[index], cur_index[index] = execute_tracking(list_boxes, trackers_list[index], tracker_indexes[index], cur_index[index])
+            # dump(cam_id, trackers_list[index])
 
         # trackers, tracker_indexes, cur_index = merge_tracker_state(trackers_list)
-        result = deduplicate(trackers_list)
+        deduplicated_trackers = deduplicate(trackers_list)
 
-        #dummy, objects, snapshot = persist_info(trackers, i, dummy)
+        dummy, snapshot = persist_info(deduplicated_trackers, i, dummy)
         #federate_info(snapshot)
         # The dummy variable enforces dependency between federate_info tasks
 
         i += 1
+        """
         if i % 5 == 0:
             compss_barrier()
+        """
 
 
 def main():
@@ -202,7 +197,9 @@ def main():
         DKB().make_persistent("DKB")
 
     start_time = time.time()
+    # execute_trackers(["192.168.50.103", "192.168.50.103:5558", "192.168.50.103:5557"])
     execute_trackers(["192.168.50.103", "192.168.50.103:5558"])
+    # execute_trackers(["192.168.50.103"])
     print("ExecTime: " + str(time.time() - start_time))
 
     print("Exiting Application...")
