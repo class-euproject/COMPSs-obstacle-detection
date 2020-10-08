@@ -14,8 +14,8 @@ def execute_tracking(list_boxes, trackers, tracker_indexes, cur_index):
 
 
 # @constraint(AppSoftware="yolo")
-@task(returns=2,)
-def receive_boxes(socket_ip):
+@task(returns=3,)
+def receive_boxes(socket_ip, dummy):
     import zmq
     import struct
 
@@ -42,7 +42,7 @@ def receive_boxes(socket_ip):
         x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 2 + int_size + 1:])
         # print((coord_north, coord_east, frame_number, ord(obj_class), x, y, w, h))
         boxes.append(track.obj_m(x, y, frame_number, ord(obj_class), int(w), int(h)))
-    return cam_id, boxes
+    return cam_id, boxes, dummy
 
 
 @task(returns=3,)
@@ -67,12 +67,12 @@ def deduplicate(trackers_list):
     return return_message
 
 
-def dump(id_cam, trackers):
+def dump(id_cam, trackers, iteration):
     import pygeohash as pgh
     for tracker in trackers:
         lat, lon = pixel2GPS(tracker.traj[-1].x, tracker.traj[-1].y)
         geohash = pgh.encode(lat, lon)
-        print(f"{id_cam} {int(datetime.now().timestamp() * 1000)} {tracker.cl} {lat} {lon} {geohash} 0 0 {tracker.id}")
+        print(f"{id_cam} {iteration} {int(datetime.now().timestamp() * 1000)} {tracker.cl} {lat} {lon} {geohash} 0 0 {tracker.id}")
 
 
 @task(returns=2, trackers=IN, count=IN, dummy=IN)
@@ -100,8 +100,8 @@ def persist_info(trackers, count, dummy):
         object_alias = "obj_" + str(index)
         try:
             event_object = Object.get_by_alias(object_alias)
-            # event_object.speed = vel_pred
-            # event_object.yaw = yaw_pred
+            # event_object.speed = int(vel_pred)
+            # event_object.yaw = int(yaw_pred)
         except DataClayException:
             event_object = Object(tracker.id, classes[tracker.cl], vel_pred, yaw_pred)
             print(f"Persisting {object_alias}")
@@ -120,9 +120,10 @@ def persist_info(trackers, count, dummy):
 
 @task(snapshot=IN)
 def federate_info(snapshot):
+    """
     from dataclay.api import get_dataclay_id
     from dataclay.exceptions.exceptions import DataClayException
-    from ElasticNS.classes import Object
+    from CityNS.classes import Object
 
     print(f"Starting federation of snapshot {snapshot.snap_alias}")
     federation_ip, federation_port = "192.168.170.103", 11034
@@ -148,9 +149,41 @@ def federate_info(snapshot):
             print(e.args[0])
     snapshot.federate(dataclay_to_federate)
     print("Finished federation")
+    """
+
+
+@task(input_path=IN, output_file=FILE_OUT)
+def analyze_pollution(input_path, output_file):
+    import os
+    import uuid
+    pollution_file_name = "pollution_" + str(uuid.uuid4()).split("-")[-1] + ".csv"
+    if os.path.exists(pollution_file_name):
+        os.remove(pollution_file_name)
+    from CityNS.classes import Event, Object, EventsSnapshot, DKB
+    kb = DKB.get_by_alias("DKB")
+    obj_refs = set()
+    with open(pollution_file_name, "w") as f:
+        f.write("VehID, LinkID, Time, Vehicle_type, Av_link_speed\n")
+        for snap in kb.kb:
+            for obj_ref in snap.objects_refs:
+                if obj_ref not in obj_refs:
+                    obj_refs.add(obj_ref)
+                    obj = Object.get_by_alias(obj_ref)
+                    obj_type = obj.type
+                    if obj_type in ["car", "bus"]:
+                        obj_type = obj_type.title()
+                    elif obj_type == "truck":
+                        obj_type = "HDV"
+                    else:
+                        continue
+                    for event in obj.events_history:
+                        f.write(f"{obj_ref}, 20939, {event.timestamp}, {obj_type}, 50\n")
+    os.system(f"Rscript --vanilla /home/nvidia/CLASS/class-app/phemlight/PHEMLight_advance.R {input_path} $PWD/{pollution_file_name}"
+              f" {output_file}")
 
 
 def execute_trackers(socket_ips):
+    import uuid
     trackers_list = [[]] * len(socket_ips)
 
     tracker_indexes = [[]] * len(socket_ips)
@@ -161,26 +194,28 @@ def execute_trackers(socket_ips):
     reference_x, reference_y = [r // 2 for r in video_resolution]
 
     i = 0
-    dummy = 0
+    reception_dummies = [0] * len(socket_ips)
+    persist_dummy = 0
     # while 1:
     while i < 40:
         for index, socket_ip in enumerate(socket_ips):
-            cam_id, list_boxes = receive_boxes(socket_ip)
+            cam_id, list_boxes, reception_dummies[index] = receive_boxes(socket_ip, reception_dummies[index])
             trackers_list[index], tracker_indexes[index], cur_index[index] = execute_tracking(list_boxes, trackers_list[index], tracker_indexes[index], cur_index[index])
-            # dump(cam_id, trackers_list[index])
+            # dump(cam_id, trackers_list[index], i)
 
         # trackers, tracker_indexes, cur_index = merge_tracker_state(trackers_list)
         deduplicated_trackers = deduplicate(trackers_list)
 
-        dummy, snapshot = persist_info(deduplicated_trackers, i, dummy)
-        #federate_info(snapshot)
+        persist_dummy, snapshot = persist_info(deduplicated_trackers, i, persist_dummy)
+        federate_info(snapshot)
         # The dummy variable enforces dependency between federate_info tasks
 
         i += 1
-        """
         if i % 5 == 0:
             compss_barrier()
-        """
+            input_path = "/home/nvidia/CLASS/class-app/phemlight/"
+            output_file = "results_" + str(uuid.uuid4()).split("-")[-1] + ".csv"
+            analyze_pollution(input_path, output_file)
 
 
 def main():
@@ -198,8 +233,10 @@ def main():
 
     start_time = time.time()
     # execute_trackers(["192.168.50.103", "192.168.50.103:5558", "192.168.50.103:5557"])
-    execute_trackers(["192.168.50.103", "192.168.50.103:5558"])
-    # execute_trackers(["192.168.50.103"])
+    # execute_trackers(["192.168.50.103", "192.168.50.103:5558"])
+    execute_trackers(["192.168.50.103"])
+    compss_barrier()
+
     print("ExecTime: " + str(time.time() - start_time))
 
     print("Exiting Application...")
