@@ -34,10 +34,11 @@ def receive_boxes(socket_ip, dummy):
     message = sink.recv()
     sink.send_string("")
     flag = len(message) > 0
+    # This flag serves to know if the video has ended
     cam_id = struct.unpack_from("i", message[1:1 + int_size])[0]
 
     for offset in range(1 + int_size, len(message), double_size * 2 + int_size + 1 + float_size * 4):
-        coord_north, coord_east, frame_number, obj_class = struct.unpack_from('ddIc', message[
+        latitude, longitude, frame_number, obj_class = struct.unpack_from('ddIc', message[
                                                                                       offset:offset + double_size * 2 + int_size + 1])
         x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 2 + int_size + 1:])
         # print((coord_north, coord_east, frame_number, ord(obj_class), x, y, w, h))
@@ -89,6 +90,7 @@ def persist_info(trackers, count, dummy):
     snapshot = EventsSnapshot(snapshot_alias)
     print(f"Persisting {snapshot_alias}")
     snapshot.make_persistent(alias=snapshot_alias)
+    snapshot_ts = int(datetime.now().timestamp() * 1000)
     objects = []
 
     for index, tracker in enumerate(trackers):
@@ -100,15 +102,15 @@ def persist_info(trackers, count, dummy):
         object_alias = "obj_" + str(index)
         try:
             event_object = Object.get_by_alias(object_alias)
-            # event_object.speed = int(vel_pred)
-            # event_object.yaw = int(yaw_pred)
+            event_object.speed = vel_pred // 2
+            event_object.yaw = int(yaw_pred)
         except DataClayException:
             event_object = Object(tracker.id, classes[tracker.cl], vel_pred, yaw_pred)
             print(f"Persisting {object_alias}")
             event_object.make_persistent(alias=object_alias)
 
-        geohash = pgh.encode(lat, lon)
-        event = Event(uuid.uuid4().int, event_object, int(datetime.now().timestamp() * 1000), float(lon), float(lat), geohash)
+        event_object.geohash = pgh.encode(lat, lon)
+        event = Event(uuid.uuid4().int, event_object, snapshot_ts, float(lon), float(lat))
         event_object.add_event(event)
         snapshot.add_object_refs(object_alias)
         objects.append(event_object)
@@ -120,13 +122,12 @@ def persist_info(trackers, count, dummy):
 
 @task(snapshot=IN)
 def federate_info(snapshot):
-    """
     from dataclay.api import get_dataclay_id
     from dataclay.exceptions.exceptions import DataClayException
     from CityNS.classes import Object
 
     print(f"Starting federation of snapshot {snapshot.snap_alias}")
-    federation_ip, federation_port = "192.168.170.103", 11034
+    federation_ip, federation_port = "192.168.7.32", 11034
     dataclay_to_federate = get_dataclay_id(federation_ip, federation_port)
     for obj_alias in snapshot.objects_refs:
         object = Object.get_by_alias(obj_alias)
@@ -149,7 +150,6 @@ def federate_info(snapshot):
             print(e.args[0])
     snapshot.federate(dataclay_to_federate)
     print("Finished federation")
-    """
 
 
 @task(input_path=IN, output_file=FILE_OUT)
@@ -162,6 +162,7 @@ def analyze_pollution(input_path, output_file):
     from CityNS.classes import Event, Object, EventsSnapshot, DKB
     kb = DKB.get_by_alias("DKB")
     obj_refs = set()
+    i = 0
     with open(pollution_file_name, "w") as f:
         f.write("VehID, LinkID, Time, Vehicle_type, Av_link_speed\n")
         for snap in kb.kb:
@@ -177,9 +178,10 @@ def analyze_pollution(input_path, output_file):
                     else:
                         continue
                     for event in obj.events_history:
-                        f.write(f"{obj_ref}, 20939, {event.timestamp}, {obj_type}, 50\n")
+                        f.write(f"{obj_ref}, {20939 + i % 2}, {event.timestamp}, {obj_type}, 50\n")
+                        i += 1
     os.system(f"Rscript --vanilla /home/nvidia/CLASS/class-app/phemlight/PHEMLight_advance.R {input_path} $PWD/{pollution_file_name}"
-              f" {output_file}")
+              f" {output_file}")  # TODO: R script path is hardcoded
 
 
 def execute_trackers(socket_ips):
@@ -207,13 +209,13 @@ def execute_trackers(socket_ips):
         deduplicated_trackers = deduplicate(trackers_list)
 
         persist_dummy, snapshot = persist_info(deduplicated_trackers, i, persist_dummy)
-        federate_info(snapshot)
+        # federate_info(snapshot)
         # The dummy variable enforces dependency between federate_info tasks
 
         i += 1
-        if i % 5 == 0:
+        if i % 10 == 0:
             compss_barrier()
-            input_path = "/home/nvidia/CLASS/class-app/phemlight/"
+            input_path = "/home/nvidia/CLASS/class-app/phemlight/in/"
             output_file = "results_" + str(uuid.uuid4()).split("-")[-1] + ".csv"
             analyze_pollution(input_path, output_file)
 
@@ -225,7 +227,7 @@ def main():
 
     init()
     from CityNS.classes import DKB
-    # register_dataclay("192.168.7.32", 11034)
+    register_dataclay("192.168.7.32", 11034)
     try:
         DKB.get_by_alias("DKB")
     except DataClayException:
