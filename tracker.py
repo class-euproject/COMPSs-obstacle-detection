@@ -17,6 +17,7 @@ def execute_tracking(list_boxes, trackers, tracker_indexes, cur_index):
 @task(returns=3,)
 def receive_boxes(socket_ip, dummy):
     import zmq
+    import pymap3d as pm
     import struct
 
     if ":" not in socket_ip:
@@ -24,6 +25,7 @@ def receive_boxes(socket_ip, dummy):
 
     context = zmq.Context()
     sink = context.socket(zmq.REP)
+
     # sink.connect("tcp://127.0.0.1:5559")
     sink.connect(f"tcp://{socket_ip}")  # tcp://172.0.0.1 for containerized executions
 
@@ -38,11 +40,11 @@ def receive_boxes(socket_ip, dummy):
     cam_id = struct.unpack_from("i", message[1:1 + int_size])[0]
 
     for offset in range(1 + int_size, len(message), double_size * 2 + int_size + 1 + float_size * 4):
-        latitude, longitude, frame_number, obj_class = struct.unpack_from('ddIc', message[
+        north, east, frame_number, obj_class = struct.unpack_from('ddIc', message[
                                                                                       offset:offset + double_size * 2 + int_size + 1])
         x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 2 + int_size + 1:])
         # print((coord_north, coord_east, frame_number, ord(obj_class), x, y, w, h))
-        boxes.append(track.obj_m(x, y, frame_number, ord(obj_class), int(w), int(h)))
+        boxes.append(track.obj_m(north, east, frame_number, ord(obj_class), int(w), int(h)))
     return cam_id, boxes, dummy
 
 
@@ -70,13 +72,24 @@ def deduplicate(trackers_list):
 
 def dump(id_cam, trackers, iteration):
     import pygeohash as pgh
-    for tracker in trackers:
-        lat, lon = pixel2GPS(tracker.traj[-1].x, tracker.traj[-1].y)
-        geohash = pgh.encode(lat, lon)
-        print(f"{id_cam} {iteration} {int(datetime.now().timestamp() * 1000)} {tracker.cl} {lat} {lon} {geohash} 0 0 {tracker.id}")
+    import os
+    ts = int(datetime.now().timestamp() * 1000)
+    if not os.path.exists("singlecamera.in"):
+        f = open("singlecamera.in", "w+")
+        f.close()
+    with open("singlecamera.in", "a+") as f:
+        for tracker in trackers:
+            lat, lon = pixel2GPS(tracker.traj[-1].x, tracker.traj[-1].y)
+            geohash = pgh.encode(lat, lon, precision=7)
+            speed = abs(tracker.predList[-1].vel) if len(tracker.predList) > 0 else -1.0
+            speed = speed / 2 if speed != -1.0 else -1.0
+            yaw = tracker.predList[-1].yaw if len(tracker.predList) > 0 else -1.0
+            f.write(f"{id_cam} {iteration} {ts} {tracker.cl} {lat} {lon} {geohash} {speed} {yaw} {id_cam}_{tracker.id}\n")
 
 
 @task(returns=2, trackers=IN, count=IN, dummy=IN)
+#def persist_info(trackers, count, dummy, id_cam): # TODO: id_cam should be passed in order to identify which objects 
+#                                                  have been identified by each cam for the alias: {id_cam}_{tracker.id}
 def persist_info(trackers, count, dummy):
     import uuid
     import pygeohash as pgh
@@ -99,18 +112,17 @@ def persist_info(trackers, count, dummy):
         lat, lon = pixel2GPS(tracker.traj[-1].x, tracker.traj[-1].y)
 
         print(f"Registering object alias {tracker.id}")
-        object_alias = "obj_" + str(index)
+        object_alias = "obj_" + str(index) # TODO: check if correct
+        #object_alias = str(id_cam) + "_" + str(tracker.id) # TODO: check if possible and replace line above
         try:
             event_object = Object.get_by_alias(object_alias)
-            event_object.speed = vel_pred // 2
-            event_object.yaw = int(yaw_pred)
         except DataClayException:
-            event_object = Object(tracker.id, classes[tracker.cl], vel_pred, yaw_pred)
+            event_object = Object(object_alias, classes[tracker.cl])
             print(f"Persisting {object_alias}")
             event_object.make_persistent(alias=object_alias)
 
         event_object.geohash = pgh.encode(lat, lon)
-        event = Event(uuid.uuid4().int, event_object, snapshot_ts, float(lon), float(lat))
+        event = Event(uuid.uuid4().int, event_object, snapshot_ts, vel_pred, yaw_pred, float(lon), float(lat))
         event_object.add_event(event)
         snapshot.add_object_refs(object_alias)
         objects.append(event_object)
@@ -127,7 +139,7 @@ def federate_info(snapshot):
     from CityNS.classes import Object
 
     print(f"Starting federation of snapshot {snapshot.snap_alias}")
-    federation_ip, federation_port = "192.168.7.32", 11034
+    federation_ip, federation_port = "192.168.7.32", 21034 # TODO: change port accordingly
     dataclay_to_federate = get_dataclay_id(federation_ip, federation_port)
     for obj_alias in snapshot.objects_refs:
         object = Object.get_by_alias(obj_alias)
@@ -199,25 +211,28 @@ def execute_trackers(socket_ips):
     reception_dummies = [0] * len(socket_ips)
     persist_dummy = 0
     # while 1:
-    while i < 40:
+    while i < 100:
         for index, socket_ip in enumerate(socket_ips):
             cam_id, list_boxes, reception_dummies[index] = receive_boxes(socket_ip, reception_dummies[index])
             trackers_list[index], tracker_indexes[index], cur_index[index] = execute_tracking(list_boxes, trackers_list[index], tracker_indexes[index], cur_index[index])
             # dump(cam_id, trackers_list[index], i)
+        # print([(t.id, t.predList[-1].vel / (3.6 * 2)) for t in trackers_list[0] if len(t.predList) > 0 and abs(t.predList[-1].vel) > .1])
 
         # trackers, tracker_indexes, cur_index = merge_tracker_state(trackers_list)
         deduplicated_trackers = deduplicate(trackers_list)
 
-        persist_dummy, snapshot = persist_info(deduplicated_trackers, i, persist_dummy)
-        # federate_info(snapshot)
+        persist_dummy, snapshot = persist_info(deduplicated_trackers, i, persist_dummy) # TODO: we need a way to identify from which camera is each object detected and tracked
+        federate_info(snapshot)
         # The dummy variable enforces dependency between federate_info tasks
 
         i += 1
         if i % 10 == 0:
-            compss_barrier()
+            compss_barrier() #TODO: uncomment below
+            """
             input_path = "/home/nvidia/CLASS/class-app/phemlight/in/"
             output_file = "results_" + str(uuid.uuid4()).split("-")[-1] + ".csv"
             analyze_pollution(input_path, output_file)
+            """
 
 
 def main():
@@ -227,7 +242,7 @@ def main():
 
     init()
     from CityNS.classes import DKB
-    register_dataclay("192.168.7.32", 11034)
+    register_dataclay("192.168.7.32", 21034)
     try:
         DKB.get_by_alias("DKB")
     except DataClayException:
@@ -236,7 +251,7 @@ def main():
     start_time = time.time()
     # execute_trackers(["192.168.50.103", "192.168.50.103:5558", "192.168.50.103:5557"])
     # execute_trackers(["192.168.50.103", "192.168.50.103:5558"])
-    execute_trackers(["192.168.50.103"])
+    execute_trackers(["192.168.50.103"]) 
     compss_barrier()
 
     print("ExecTime: " + str(time.time() - start_time))
