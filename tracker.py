@@ -94,15 +94,16 @@ def dump(id_cam, ts, trackers, iteration):
 
 
 # @constraint(AppSoftware="nvidia") # TODO: it only makes sense to execute it where dataclay is present
-@task(returns=2, trackers=IN, count=IN, dummy=IN)
-#def persist_info(trackers, count, dummy, id_cam): # TODO: id_cam should be passed in order to identify which objects 
-#                                                  have been identified by each cam for the alias: {id_cam}_{tracker.id}
-def persist_info(trackers, count, dummy, kb):
+@task(returns=2, trackers=IN, count=IN, detected_objects=IN, kb=IN)
+# def persist_info(trackers, count, detected_objects, kb, id_cam): # TODO: id_cam should be passed in order to identify
+# which objects have been identified by each cam for the alias: {id_cam}_{tracker.id}
+def persist_info(trackers, count, detected_objects, kb):
     import uuid
     import pygeohash as pgh
     from dataclay.exceptions.exceptions import DataClayException
 
-    from CityNS.classes import Event, Object, EventsSnapshot, DKB
+    from CityNS.classes import Event, Object, EventsSnapshot, DKB #, ListOfEvents # TODO: current fix to dataclay
+    # serialization bug
 
     classes = ["person", "car", "truck", "bus", "motor", "bike", "rider", "traffic light", "traffic sign", "train"]
     snapshot_alias = "events_" + str(count)
@@ -110,7 +111,7 @@ def persist_info(trackers, count, dummy, kb):
     print(f"Persisting {snapshot_alias}")
     # snapshot.make_persistent(alias=snapshot_alias)
     snapshot_ts = int(datetime.now().timestamp() * 1000)
-    objects = dict()
+    events = []
 
     for index, tracker in enumerate(trackers):
         vel_pred = abs(tracker.predList[-1].vel) if len(tracker.predList) > 0 else 0.0
@@ -122,25 +123,27 @@ def persist_info(trackers, count, dummy, kb):
         object_alias = "obj_" + str(index)
         # object_alias = str(id_cam) + "_" + str(tracker.id) # TODO: check if possible and replace line above
         try:
-            event_object = Object.get_by_alias(object_alias)
-        except DataClayException:
+            event_object = detected_objects[object_alias]
+        except:
             event_object = Object(tracker.id, classes[tracker.cl])
+            detected_objects[object_alias] = event_object
             # event_object = Object(object_alias, classes[tracker.cl]) # TODO: this should be with object_alias based
             # on "{cam_id}_{tracker.id}"
             print(f"Persisting {object_alias}")
             # event_object.make_persistent(alias=object_alias)
 
-        event_object.geohash = pgh.encode(lat, lon)
+        # event_object.geohash = pgh.encode(lat, lon) # moved inside dataclay model add_events
         event = Event(uuid.uuid4().int, event_object, snapshot_ts, vel_pred, yaw_pred, float(lon), float(lat))
-        event_object.add_event(event)
+        # event_object.add_event(event) # moved inside dataclay model add_events
         snapshot.add_object_refs(object_alias)
-        objects[object_alias] = event_object
+        events.append(event)
 
-    snapshot.make_persistent(alias=snapshot_alias)
-    snapshot.add_objects(objects)  # TODO: use if list<objects> added in model
     kb.add_events_snapshot(snapshot)
+    # snapshot.make_persistent(alias=snapshot_alias)
+    # list_events = ListOfEvents(events) # TODO: current fix to dataclay serialization bug. To be replaced by events array
+    snapshot.add_events(events)  ## TODO: add all events to its object inside model
     # trigger_openwhisk(snapshot_alias)
-    return dummy, snapshot
+    return detected_objects, snapshot
 
 
 @task(snapshot=IN)
@@ -228,7 +231,7 @@ def execute_trackers(socket_ips, kb):
 
     i = 0
     reception_dummies = [0] * len(socket_ips)
-    persist_dummy = 0
+    detected_objects = dict()
     # while 1:
     while i < NUM_ITERS:
         for index, socket_ip in enumerate(socket_ips):
@@ -245,13 +248,13 @@ def execute_trackers(socket_ips, kb):
         # deduplicated_trackers = deduplicate(trackers_list, cam_ids, timestamps) # TODO: pass cam_ids and timestamps
         # to deduplicate and store it in MASAMessages
 
-        persist_dummy, snapshot = persist_info(deduplicated_trackers, i, persist_dummy, kb)  # TODO: we need a way to
+        detected_objects, snapshot = persist_info(deduplicated_trackers, i, detected_objects, kb)  # TODO: we need a way to
         # identify from which camera is each object detected and tracked
         federate_info(snapshot)
         # The dummy variable enforces dependency between federate_info tasks
 
         i += 1
-        if i % 10 == 0:
+        if i != 0 and i % 10 == 0:
             compss_barrier() #TODO: uncomment below
             """
             input_path = "/home/nvidia/CLASS/class-app/phemlight/in/"
