@@ -6,21 +6,21 @@ from utils import pixel2GPS
 import track
 import deduplicator as dd
 from datetime import datetime
-
 # import threading
 
-NUM_ITERS = 100
+NUM_ITERS = 60
+SNAP_PER_FEDERATION = 15
 N = 5
 
 
 # @constraint(AppSoftware="nvidia")
-@task(returns=3, list_boxes=IN, trackers=IN, tracker_indexes=IN, cur_index=IN)
-def execute_tracking(list_boxes, trackers, tracker_indexes, cur_index):
-    return track.track2(list_boxes, trackers, tracker_indexes, cur_index)
+@task(returns=3, list_boxes=IN, trackers=IN, cur_index=IN)
+def execute_tracking(list_boxes, trackers, cur_index):
+    return track.track2(list_boxes, trackers, cur_index)
 
 
 """
-# @constraint(AppSoftware="nvidia")
+# @constraint(AppSoftware="xavier")
 @task(returns=4,)
 def receive_boxes(socket_ip, dummy):
     import zmq
@@ -56,7 +56,7 @@ def receive_boxes(socket_ip, dummy):
 """
 
 
-# @constraint(AppSoftware="nvidia")
+@constraint(AppSoftware="xavier")
 @task(returns=4, )
 def receive_boxes(pipe_paths, dummy):
     import struct
@@ -121,66 +121,60 @@ def dump(id_cam, ts, trackers, iteration):
         for tracker in trackers:
             lat, lon = pixel2GPS(tracker.traj[-1].x, tracker.traj[-1].y)
             geohash = pgh.encode(lat, lon, precision=7)
-            speed = abs(tracker.predList[-1].vel) if len(tracker.predList) > 0 else 0.0
+            speed = abs(tracker.ekf.xEst.vel)
             speed = speed / 2
-            yaw = tracker.predList[-1].yaw if len(tracker.predList) > 0 else 0.0
+            yaw = tracker.ekf.xEst.yaw
             f.write(
                 f"{id_cam} {iteration} {ts} {tracker.cl} {lat} {lon} {geohash} {speed} {yaw} {id_cam}_{tracker.id}\n")
 
 
-@task(returns=1, trackers_list=COLLECTION_IN, count=IN, kb=IN, list_objects=IN)
-def persist_info_accumulated(trackers_list, count, kb, list_objects):
+@constraint(AppSoftware="xavier")
+@task(returns=1, trackers_list=COLLECTION_IN, count=IN, kb=IN)
+def persist_info_accumulated(trackers_list, count, kb):
     from CityNS.classes import EventsSnapshot
     snapshot_alias = "events_" + str(count)
     snapshot = EventsSnapshot(snapshot_alias)
-    kb.add_events_snapshot(snapshot)  # persists snapshot
+    kb.add_events_snapshot(snapshot) # persists snapshot
     for trackers in trackers_list:
-        snapshot.add_events_from_trackers(trackers, list_objects)  # create events inside dataclay
+        snapshot.add_events_from_trackers(trackers, kb)  # create events inside dataclay
     return snapshot
 
 
-@constraint(AppSoftware="nvidia")
-@task(returns=1, trackers=IN, count=IN, kb=IN, list_objects=IN)
-def persist_info(trackers, count, kb, list_objects):
+@constraint(AppSoftware="xavier")
+@task(returns=1, trackers=IN, count=IN, kb=IN)
+def persist_info(trackers, count, kb):
     from CityNS.classes import EventsSnapshot
     snapshot_alias = "events_" + str(count)
     snapshot = EventsSnapshot(snapshot_alias)
-    kb.add_events_snapshot(snapshot)  # persists snapshot
+    kb.add_events_snapshot(snapshot) # persists snapshot
     # print("LEN OF TRACKERS: " + str(len(trackers[1])))
-    snapshot.add_events_from_trackers(trackers, list_objects)  # create events inside dataclay
+    snapshot.add_events_from_trackers(trackers, kb)  # create events inside dataclay
     return snapshot
 
 
-@task(snapshot=IN)
-def federate_info(snapshot):
-    from dataclay.api import get_dataclay_id
-    from dataclay.exceptions.exceptions import DataClayException
-    from CityNS.classes import Object
+@task(snapshot=IN, dataclay_to_federate=IN)
+def federate_info(snapshot, dataclay_to_federate):
+    from CityNS.classes import FederationInfo
+    snapshots = [snapshot]
 
-    print(f"Starting federation of snapshot {snapshot.snap_alias}")
-    federation_ip, federation_port = "192.168.7.32", 21034  # TODO: change port accordingly
-    dataclay_to_federate = get_dataclay_id(federation_ip, federation_port)
-    for obj_alias in snapshot.objects_refs:
-        obj = Object.get_by_alias(obj_alias)
-        if len(obj.get_federation_targets() or []) == 0:
-            try:
-                obj.federate(dataclay_to_federate)
-                print(f"Federation of object {obj_alias} was successful")
-            except KeyboardInterrupt as e:
-                raise e
-            except DataClayException as e:
-                print(f"Federation of object {obj_alias} failed")
-                print(e.args[0])
-        try:
-            obj.events_history[-1].federate(dataclay_to_federate)
-            print(f"Federation of last event of object {obj_alias} was successful")
-        except KeyboardInterrupt as e:
-            raise e
-        except DataClayException as e:
-            print(f"Federation of last event of object {obj_alias} failed")
-            print(e.args[0])
-    snapshot.federate(dataclay_to_federate)
-    print("Finished federation")
+    # create snapshots and events into FederateInfo structure
+    federation_info = FederationInfo(snapshots)
+    federation_info.make_persistent()
+
+    # federate snapshots and events
+    federation_info.federate(dataclay_to_federate)
+
+
+@task(snapshots=COLLECTION_IN, dataclay_to_federate=IN)
+def federate_info_accumulated(snapshots, dataclay_to_federate):
+    from CityNS.classes import FederationInfo
+
+    # create snapshots and events into FederateInfo structure
+    federation_info = FederationInfo(snapshots)
+    federation_info.make_persistent()
+
+    # federate snapshots and events
+    federation_info.federate(dataclay_to_federate)
 
 
 # @constraint(AppSoftware="phemlight") # TODO: to be executed in Cloud. Remove it otherwise
@@ -218,10 +212,11 @@ def analyze_pollution(input_path, output_file):
         f" {output_file}")  # TODO: R script path is hardcoded
 
 
+# @task() # for my scheduler
 @task(is_replicated=True)
 def init_task():
     import uuid
-    from CityNS.classes import DKB, Event, Object, EventsSnapshot, ListOfEvents, ListOfObjects
+    from CityNS.classes import DKB, Event, Object, EventsSnapshot, ListOfObjects, FederationInfo
     kb = DKB()
     kb.make_persistent("FAKE_" + str(uuid.uuid4()))
     kb.get_objects_from_dkb()
@@ -235,9 +230,10 @@ def init_task():
     obj.get_events_history()
     list_objs = ListOfObjects()
     list_objs.make_persistent("FAKE_LISTOBJ_" + str(uuid.uuid4()))
-    list_objs.initialize_locks()
-    list_events = ListOfEvents([])
-    list_events.make_persistent("FAKE_LISTEV_" + str(uuid.uuid4()))
+    list_objs.get_or_create("FAKE_LISTOBJ_" + str(uuid.uuid4()), "FAKE")
+    federation_info = FederationInfo([snap])
+    federation_info.make_persistent()
+    federation_info.objects_per_snapshot  # to load dataclay class and libraries
 
 
 @constraint(AppSoftware="nvidia")
@@ -247,93 +243,62 @@ def boxes_and_track(socket_ip, trackers_list, tracker_indexes, cur_index):
     return execute_tracking(list_boxes, trackers_list, tracker_indexes, cur_index)
 
 
-def execute_trackers(socket_ips, kb, list_objects):
+def execute_trackers(pipe_paths, kb):
     import uuid
     import time
     import sys
     import os
+    from dataclay.api import get_dataclay_id
 
     trackers_list = [[]] * len(socket_ips)
-    tracker_indexes = [[]] * len(socket_ips)
     cur_index = [0] * len(socket_ips)
+    info_for_deduplicator = [0] * len(socket_ips)
+    snapshots = list()
     cam_ids = [0] * len(socket_ips)
     timestamps = [0] * len(socket_ips)
+    deduplicated_trackers_list = []  # TODO: accumulate trackers
 
     # video_resolution = (1920, 1080)  # TODO: RESOLUTION SHOULD NOT BE HARDCODED!
     video_resolution = (3072, 1730)  # TODO: RESOLUTION SHOULD NOT BE HARDCODED!
     reference_x, reference_y = [r // 2 for r in video_resolution]
 
-    """
-    if os.path.exists("/tmp/pipe_yolo2COMPSs"):
-            os.unlink("/tmp/pipe_yolo2COMPSs")
-    if os.path.exists("/tmp/pipe_COMPSs2yolo"):
-            os.unlink("/tmp/pipe_COMPSs2yolo")
-    try:
-        os.mkfifo("/tmp/pipe_yolo2COMPSs")
-    except OSError as e:
-        pass
-    try:
-        os.mkfifo("/tmp/pipe_COMPSs2yolo")
-    except OSError as e:
-        pass
+    federation_ip, federation_port = "192.168.7.32", 11034  # TODO: change port accordingly
+    # federation_ip, federation_port = "192.168.7.32", 21034 # TODO: change port accordingly
+    # federation_ip, federation_port = "192.168.50.103", 21034 # TODO: change port accordingly
+    dataclay_to_federate = get_dataclay_id(federation_ip, federation_port)
 
-    fifo_read = open("/tmp/pipe_yolo2COMPSs", 'rb')
-    fifo_write = open("/tmp/pipe_COMPSs2yolo", 'w')
-
-    # create pipes from COMPSs to yolo
-    pipe_paths = ["/tmp/pipe_COMPSs2yolo"]
-    for pipe_path in pipe_paths:
-        if os.path.exists(pipe_path):
-            os.unlink(pipe_path)
-        try:
-            os.mkfifo(pipe_path)
-        except OSError as e:
-            print("Failed to create FIFO: " + str(e))
-            pass
-    """
-
-    pipe_paths = [("/tmp/pipe_yolo2COMPSs", "/tmp/pipe_COMPSs2yolo")] # TODO: define in main and pass it instead of socket
-    start_time = time.time()
-
-    deduplicated_trackers_list = []  # TODO: accumulate trackers
     i = 0
     reception_dummies = [0] * len(socket_ips)
+    start_time = time.time()
     while i < NUM_ITERS:
         for index, pipe_path in enumerate(pipe_paths):
             cam_ids[index], timestamps[index], list_boxes, reception_dummies[index] = \
                 receive_boxes(pipe_path, reception_dummies[index])
-            trackers_list[index], tracker_indexes[index], cur_index[index] = execute_tracking(list_boxes,
-                                                                                              trackers_list[index],
-                                                                                              tracker_indexes[index],
-                                                                                              cur_index[index])
+            trackers_list[index], cur_index[index], info_for_deduplicator[index] = execute_tracking(list_boxes,
+                                                                                                    trackers_list[index],
+                                                                                                    cur_index[index])
             # print(f"CAM ID: {cam_ids[index]}, timestamp: {timestamps[index]}, list_boxes: {[list_boxes]}")
-        """
-        for index, socket_ip in enumerate(socket_ips):
-            # trackers_list[index], tracker_indexes[index], cur_index[index] = \
-            #        boxes_and_track(socket_ip, trackers_list[index], tracker_indexes[index], cur_index[index])
-            cam_ids[index], timestamps[index], list_boxes, reception_dummies[index] = \
-                receive_boxes(socket_ip, reception_dummies[index])
-            trackers_list[index], tracker_indexes[index], cur_index[index] = \
-                execute_tracking(list_boxes, trackers_list[index], tracker_indexes[index], cur_index[index])
             # dump(cam_ids[index], timestamps[index], trackers_list[index], i)
-        # print([(t.id, t.predList[-1].vel / (3.6 * 2)) for t in trackers_list[0] if len(t.predList) > 0
-        # and abs(t.predList[-1].vel) > .1])
-        """
 
         # trackers, tracker_indexes, cur_index = merge_tracker_state(trackers_list)
-        deduplicated_trackers = deduplicate(trackers_list) # , cam_ids, timestamps) # TODO: pass cam_ids and timestamps
+        deduplicated_trackers = deduplicate(info_for_deduplicator) # , cam_ids, timestamps) # TODO: pass cam_ids and timestamps
         # deduplicated_trackers_list.append(deduplicated_trackers) # TODO: accumulate trackers
 
         """# TODO: accumulate trackers
         if i != 0 and (i+1) % N == 0:
-            snapshot = persist_info_accumulated(deduplicated_trackers_list, i, kb, list_objects)
+            snapshot = persist_info_accumulated(deduplicated_trackers_list, i, kb)
             deduplicated_trackers_list.clear() 
         """
-        snapshot = persist_info(deduplicated_trackers, i, kb, list_objects)
+        snapshot = persist_info(deduplicated_trackers, i, kb)
+        """
+        snapshots.append(snapshot)
+        if i != 0 and (i+1) % SNAP_PER_FEDERATION == 0:
+            federate_info_accumulated(snapshots, dataclay_to_federate)
+        """
+        federate_info(snapshot, dataclay_to_federate)
         i += 1
-        # identify from which camera is each object detected and tracked
-        federate_info(snapshot)
         if i != 0 and i % 10 == 0:
+            compss_barrier()
             input_path = "/home/nvidia/CLASS/class-app/phemlight/in/"
             output_file = "results_" + str(uuid.uuid4()).split("-")[-1] + ".csv"
             analyze_pollution(input_path, output_file)
@@ -350,7 +315,7 @@ def main():
 
     init()
     from CityNS.classes import DKB, ListOfObjects
-    register_dataclay("192.168.7.32", 21034)
+    # register_dataclay("192.168.7.32", 21034)
 
     # initialize all computing units in all workers
     num_cus = 8
@@ -358,25 +323,21 @@ def main():
         init_task()
     compss_barrier()
 
-    list_objects = ListOfObjects()
-    list_objects.make_persistent()
-    list_objects.initialize_locks()
-
     try:
         kb = DKB.get_by_alias("DKB")
     except DataClayException:
         kb = DKB()
+        list_objects = ListOfObjects()
+        list_objects.make_persistent()
+        kb.list_objects = list_objects
         kb.make_persistent("DKB")
 
     start_time = time.time()
-    # execute_trackers(["192.168.50.103", "192.168.50.103:5558", "192.168.50.103:5557"], kb, list_objects)
-    # execute_trackers(["192.168.50.103", "192.168.50.103:5558"], kb, list_objects)
-    execute_trackers(["192.168.50.103"], kb, list_objects)
-    # compss_barrier()
+    # execute_trackers(["192.168.50.103"], kb)
+    execute_trackers([("/tmp/pipe_yolo2COMPSs", "/tmp/pipe_COMPSs2yolo")], kb)
 
     # print("ExecTime: " + str(time.time() - start_time))
     # print("ExecTime per Iteration: " + str((time.time() - start_time) / NUM_ITERS))
-
     print("Exiting Application...")
     finish()
 
