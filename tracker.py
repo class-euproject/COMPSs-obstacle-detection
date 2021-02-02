@@ -1,9 +1,10 @@
+from datetime import datetime
 from pycompss.api.parameter import *
 from pycompss.api.task import task
 from pycompss.api.api import compss_barrier, compss_wait_on
 from pycompss.api.constraint import constraint
+from socket import timeout
 from utils import pixel2GPS
-from datetime import datetime
 import track
 import deduplicator as dd
 import paho.mqtt.client as mqtt
@@ -47,12 +48,12 @@ def receive_boxes(socket_ip, dummy):
     cam_id = struct.unpack_from("i", message[1:1 + int_size])[0]
     timestamp = struct.unpack_from("Q", message[1 + int_size:1 + int_size + unsigned_long_size])[0]
 
-    for offset in range(1 + int_size + unsigned_long_size, len(message), double_size * 2 + int_size + 1 + float_size * 4):
-        north, east, frame_number, obj_class = struct.unpack_from('ddIc', message[
-                                                                          offset:offset + double_size * 2 + int_size + 1])
-        x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 2 + int_size + 1:])
+    for offset in range(1 + int_size + unsigned_long_size, len(message), double_size * 4 + int_size + 1 + float_size * 4):
+        north, east, lat, lon, frame_number, obj_class = struct.unpack_from('ddddIc', message[
+                                                                          offset:offset + double_size * 4 + int_size + 1])
+        x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 4 + int_size + 1:])
         # print((coord_north, coord_east, frame_number, ord(obj_class), x, y, w, h))
-        boxes.append(track.obj_m(north, east, frame_number, ord(obj_class), int(w), int(h)))
+        boxes.append(track.obj_m(north, east, frame_number, ord(obj_class), int(w), int(h), lat, lon))
     return cam_id, timestamp, boxes, dummy
 """
 
@@ -80,11 +81,11 @@ def receive_boxes(pipe_paths, dummy):
     timestamp = struct.unpack_from("Q", message[1 + int_size:1 + int_size + unsigned_long_size])[0]
     pixels = [] # for logging purposes it is needed
     for offset in range(1 + int_size + unsigned_long_size, len(message),
-                        double_size * 2 + int_size + 1 + float_size * 4):
-        north, east, frame_number, obj_class = struct.unpack_from('ddIc', message[
-                                                                          offset:offset + double_size * 2 + int_size + 1])
-        x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 2 + int_size + 1:])
-        boxes.append(track.obj_m(north, east, frame_number, ord(obj_class), int(w), int(h)))
+                        double_size * 4 + int_size + 1 + float_size * 4):
+        north, east, lat, lon, frame_number, obj_class = struct.unpack_from('ddddIc', message[
+                                                                          offset:offset + double_size * 4 + int_size + 1])
+        x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 4 + int_size + 1:])
+        boxes.append(track.obj_m(north, east, frame_number, ord(obj_class), int(w), int(h), lat, lon))
         pixels.append((x, y))
     # return cam_id, timestamp, boxes, dummy # TODO: added x, y (pixels) as they are not in list_boxes anymore
     return cam_id, timestamp, boxes, dummy, pixels # for logging purposes it is needed
@@ -132,10 +133,8 @@ def dump(id_cam, ts, trackers, iteration, list_boxes, info_for_deduplicator, pix
             yaw = info_for_deduplicator[i][4]
             pixel_x = pixels[tracker.idx][0]
             pixel_y = pixels[tracker.idx][1]
-            # f.write(
-            # f"{id_cam} {iteration} {ts} {cl} {lat:.14f} {lon:.14f} {geohash} {speed} {yaw} {id_cam}_{tracker.id} \
-            # {tracker.idx].x} {list_boxes[tracker.idx].y} {list_boxes[tracker.idx].w} {list_boxes[tracker.idx].h}\n")
             f.write(
+                # f"{id_cam} {iteration} {ts} {cl} {lat:.14f} {lon:.14f} {geohash} {speed} {yaw} {id_cam}_{tracker.id} \
                 f"{id_cam} {iteration} {ts} {cl} {lat} {lon} {geohash} {speed} {yaw} {id_cam}_{tracker.id} {pixel_x} \
                 {pixel_y} {list_boxes[tracker.idx].w} {list_boxes[tracker.idx].h}\n")
 
@@ -159,7 +158,6 @@ def persist_info(trackers, count, kb):
     snapshot_alias = "events_" + str(count)
     snapshot = EventsSnapshot(snapshot_alias)
     kb.add_events_snapshot(snapshot) # persists snapshot
-    # print("LEN OF TRACKERS: " + str(len(trackers[1])))
     snapshot.add_events_from_trackers(trackers, kb)  # create events inside dataclay
     return snapshot
 
@@ -271,11 +269,7 @@ def execute_trackers(pipe_paths, kb):
     deduplicated_trackers_list = []  # TODO: accumulate trackers
     pixels = [0] * len(pipe_paths)
 
-    video_resolution = (3072, 1730)  # TODO: RESOLUTION SHOULD NOT BE HARDCODED!
-    reference_x, reference_y = [r // 2 for r in video_resolution]
-
     federation_ip, federation_port = "192.168.7.32", 11034  # TODO: change port accordingly
-    # federation_ip, federation_port = "192.168.7.32", 21034 # TODO: change port accordingly
     # federation_ip, federation_port = "192.168.50.103", 21034 # TODO: change port accordingly
     dataclay_to_federate = get_dataclay_id(federation_ip, federation_port)
 
@@ -297,6 +291,20 @@ def execute_trackers(pipe_paths, kb):
         # trackers, tracker_indexes, cur_index = merge_tracker_state(trackers_list)
         deduplicated_trackers = deduplicate(info_for_deduplicator) # , cam_ids, timestamps) # TODO: pass cam_ids and timestamps
         # deduplicated_trackers_list.append(deduplicated_trackers) # TODO: accumulate trackers
+        """
+        for trackers in trackers_list:
+            for idx, tracker in enumerate(trackers): # TODO: fix [0] for more videos
+                if tracker.id not in [t.id for t in trackers_list[0] if t.traj[-1].frame == i]:
+                    continue
+                cl = info_for_deduplicator[0][idx][2]
+                vel = info_for_deduplicator[0][idx][3]
+                yaw = info_for_deduplicator[0][idx][4]
+                lat = info_for_deduplicator[0][idx][0] # round(info_for_deduplicator[0][idx][0], 14)
+                lon = info_for_deduplicator[0][idx][1] # round(info_for_deduplicator[0][idx][1], 14)
+                return_dedu.append((cam_ids[0], tracker.id, cl, vel, yaw, lat, lon))
+                # return_dedu[idx] = tuple(j for i in return_dedu[idx] for j in (i if isinstance(i, tuple) else (i,)))
+        deduplicated_trackers = (timestamps[0], return_dedu)
+        """
 
         """# TODO: accumulate trackers
         if i != 0 and (i+1) % N == 0:
@@ -330,17 +338,23 @@ def on_message(client, userdata, message):
     print(f"Received message = {msg}\nat time {received_time}")
 
 
-def publish_mqtt():
-    client = mqtt.Client()
-    client.connect("192.168.7.41")
+def publish_mqtt(client):
     client.publish("test", "Start of the execution of the COMPSs workflow")
 
 
 def register_mqtt():
     client=mqtt.Client()
-    client.connect("192.168.7.41") # MQTT server in Modena cloud
+    try:
+        client.connect("192.168.7.41") # MQTT server in Modena cloud
+    except timeout as e:
+        print(e)
+        print("VPN Connection not active. Needed for MQTT.")
+        exit()
     client.on_message=on_message
     client.subscribe("test")
+    client.subscribe("tp-out")
+    client.subscribe("cd-out")
+    return client
 
 
 def main():
@@ -352,7 +366,7 @@ def main():
     from CityNS.classes import DKB, ListOfObjects
 
     # Register MQTT client to subscribe to MQTT server in 192.168.7.41
-    register_mqtt()
+    client = register_mqtt()
 
     # initialize all computing units in all workers
     num_cus = 8
@@ -361,7 +375,7 @@ def main():
     compss_barrier()
 
     # Publish to the MQTT broker that the execution has started
-    publish_mqtt()
+    publish_mqtt(client)
 
     try:
         kb = DKB.get_by_alias("DKB")
