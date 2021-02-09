@@ -13,6 +13,7 @@ import paho.mqtt.client as mqtt
 NUM_ITERS = 60
 SNAP_PER_FEDERATION = 15
 N = 5
+CD_PROC = 0
 
 
 # @constraint(AppSoftware="nvidia")
@@ -83,12 +84,12 @@ def receive_boxes(pipe_paths, dummy):
     for offset in range(1 + int_size + unsigned_long_size, len(message),
                         double_size * 4 + int_size + 1 + float_size * 4):
         north, east, lat, lon, frame_number, obj_class = struct.unpack_from('ddddIc', message[
-                                                                          offset:offset + double_size * 4 + int_size + 1])
+                                                                        offset:offset + double_size * 4 + int_size + 1])
         x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 4 + int_size + 1:])
-        boxes.append(track.obj_m(north, east, frame_number, ord(obj_class), int(w), int(h), lat, lon))
-        pixels.append((x, y))
+        boxes.append(track.obj_m(north, east, frame_number, ord(obj_class), int(w), int(h), lat, lon, int(x), int(y)))
+        # pixels.append((x, y))
     # return cam_id, timestamp, boxes, dummy # TODO: added x, y (pixels) as they are not in list_boxes anymore
-    return cam_id, timestamp, boxes, dummy, pixels # for logging purposes it is needed
+    return cam_id, timestamp, boxes, dummy  #, pixels # for logging purposes it is needed
 
 
 @task(returns=3, )
@@ -116,7 +117,7 @@ def deduplicate(trackers_list):
     return return_message
 
 
-def dump(id_cam, ts, trackers, iteration, list_boxes, info_for_deduplicator, pixels):
+def dump(id_cam, ts, trackers, iteration, list_boxes, info_for_deduplicator):
     import pygeohash as pgh
     import os
     filename = "singlecamera.in"
@@ -131,8 +132,8 @@ def dump(id_cam, ts, trackers, iteration, list_boxes, info_for_deduplicator, pix
             cl = info_for_deduplicator[i][2]
             speed = info_for_deduplicator[i][3]
             yaw = info_for_deduplicator[i][4]
-            pixel_x = pixels[tracker.idx][0]
-            pixel_y = pixels[tracker.idx][1]
+            pixel_x = info_for_deduplicator[i][6]  # OR list_boxes[tracker.idx].x  # pixels[tracker.idx][0]
+            pixel_y = info_for_deduplicator[i][7]  # pixels[tracker.idx][1]
             f.write(
                 # f"{id_cam} {iteration} {ts} {cl} {lat:.14f} {lon:.14f} {geohash} {speed} {yaw} {id_cam}_{tracker.id} \
                 f"{id_cam} {iteration} {ts} {cl} {lat} {lon} {geohash} {speed} {yaw} {id_cam}_{tracker.id} {pixel_x} \
@@ -235,7 +236,7 @@ def init_task():
     snap.get_objects_refs()
     event = Event(None, None, None, None, None, None, None)
     event.make_persistent("FAKE_EVENT_" + str(uuid.uuid4()))
-    obj = Object("FAKE_OBJ_" + str(uuid.uuid4()), "FAKE")
+    obj = Object("FAKE_OBJ_" + str(uuid.uuid4()), "FAKE", 0, 0, 0, 0)
     obj.make_persistent("FAKE_OBJ_" + str(uuid.uuid4()))
     obj.get_events_history(20)
     list_objs = ListOfObjects()
@@ -263,11 +264,10 @@ def execute_trackers(pipe_paths, kb):
     trackers_list = [[]] * len(socket_ips)
     cur_index = [0] * len(socket_ips)
     info_for_deduplicator = [0] * len(socket_ips)
-    snapshots = list()
+    snapshots = list()  # accumulate snapshots
     cam_ids = [0] * len(socket_ips)
     timestamps = [0] * len(socket_ips)
     deduplicated_trackers_list = []  # TODO: accumulate trackers
-    pixels = [0] * len(pipe_paths)
 
     federation_ip, federation_port = "192.168.7.32", 11034  # TODO: change port accordingly
     # federation_ip, federation_port = "192.168.50.103", 21034 # TODO: change port accordingly
@@ -278,18 +278,18 @@ def execute_trackers(pipe_paths, kb):
     start_time = time.time()
     while i < NUM_ITERS:
         for index, pipe_path in enumerate(pipe_paths):
-            # cam_ids[index], timestamps[index], list_boxes, reception_dummies[index] = \ # without pixels
-            cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], pixels[index] = \
+            # cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], pixels[index], sizes[index] = \
+            cam_ids[index], timestamps[index], list_boxes, reception_dummies[index] = \
                 receive_boxes(pipe_path, reception_dummies[index])
             trackers_list[index], cur_index[index], info_for_deduplicator[index] = execute_tracking(list_boxes,
                                                                                                     trackers_list[index],
                                                                                                     cur_index[index])
             # print(f"CAM ID: {cam_ids[index]}, timestamp: {timestamps[index]}, list_boxes: {[list_boxes]}")
             # dump(cam_ids[index], timestamps[index], trackers_list[index], i, list_boxes, \
-            # info_for_deduplicator[index], pixels[index])
+            # info_for_deduplicator[index])  #, pixels[index])
 
         # trackers, tracker_indexes, cur_index = merge_tracker_state(trackers_list)
-        deduplicated_trackers = deduplicate(info_for_deduplicator) # , cam_ids, timestamps) # TODO: pass cam_ids and timestamps
+        deduplicated_trackers = deduplicate(info_for_deduplicator) # , cam_ids, timestamps) # pass cam_ids and timestamp
         # deduplicated_trackers_list.append(deduplicated_trackers) # TODO: accumulate trackers
         """
         for trackers in trackers_list:
@@ -301,7 +301,13 @@ def execute_trackers(pipe_paths, kb):
                 yaw = info_for_deduplicator[0][idx][4]
                 lat = info_for_deduplicator[0][idx][0] # round(info_for_deduplicator[0][idx][0], 14)
                 lon = info_for_deduplicator[0][idx][1] # round(info_for_deduplicator[0][idx][1], 14)
-                return_dedu.append((cam_ids[0], tracker.id, cl, vel, yaw, lat, lon))
+                track_id = info_for_deduplicator[0][idx][5]
+                pixel_x = info_for_deduplicator[0][idx][6]
+                pixel_y = info_for_deduplicator[0][idx][7]
+                pixel_w = info_for_deduplicator[0][idx][8]
+                pixel_h = info_for_deduplicator[0][idx][9]
+                return_dedu.append((cam_ids[0], tracker.id, cl, vel, yaw, lat, lon, track_id, pixel_x, pixel_y, \
+                        pixel_w, pixel_h))
                 # return_dedu[idx] = tuple(j for i in return_dedu[idx] for j in (i if isinstance(i, tuple) else (i,)))
         deduplicated_trackers = (timestamps[0], return_dedu)
         """
@@ -333,9 +339,11 @@ def execute_trackers(pipe_paths, kb):
 
 def on_message(client, userdata, message):
     import time
+    global CD_PROC
+    CD_PROC += 1
     received_time = time.time()
     msg = str(message.payload.decode('utf-8'))
-    print(f"Received message = {msg}\nat time {received_time}")
+    print(f"Received message = \"{msg}\" at time {received_time}")
 
 
 def publish_mqtt(client):
@@ -343,9 +351,9 @@ def publish_mqtt(client):
 
 
 def register_mqtt():
-    client=mqtt.Client()
+    client = mqtt.Client()
     try:
-        client.connect("192.168.7.41") # MQTT server in Modena cloud
+        client.connect("192.168.7.42")  # MQTT server in Modena cloud
     except timeout as e:
         print(e)
         print("VPN Connection not active. Needed for MQTT.")
@@ -358,15 +366,21 @@ def register_mqtt():
 
 
 def main():
+    import sys
     import time
     from dataclay.api import init, finish
     from dataclay.exceptions.exceptions import DataClayException
 
+    mqtt_wait = False
+    if len(sys.argv) == 2:
+        mqtt_wait = sys.argv[1]
+
     init()
     from CityNS.classes import DKB, ListOfObjects
 
-    # Register MQTT client to subscribe to MQTT server in 192.168.7.41
-    client = register_mqtt()
+    # Register MQTT client to subscribe to MQTT server in 192.168.7.42
+    if mqtt_wait:
+        client = register_mqtt()
 
     # initialize all computing units in all workers
     num_cus = 8
@@ -375,7 +389,8 @@ def main():
     compss_barrier()
 
     # Publish to the MQTT broker that the execution has started
-    publish_mqtt(client)
+    if mqtt_wait:
+        publish_mqtt(client)
 
     try:
         kb = DKB.get_by_alias("DKB")
@@ -391,6 +406,10 @@ def main():
     execute_trackers([("/tmp/pipe_yolo2COMPSs", "/tmp/pipe_COMPSs2yolo")], kb)
     # print("ExecTime: " + str(time.time() - start_time))
     # print("ExecTime per Iteration: " + str((time.time() - start_time) / NUM_ITERS))
+
+    if mqtt_wait:
+        while CD_PROC < NUM_ITERS:
+            pass
     print("Exiting Application...")
     finish()
 
