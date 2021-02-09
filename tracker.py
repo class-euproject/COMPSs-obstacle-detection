@@ -5,9 +5,9 @@ from pycompss.api.api import compss_barrier, compss_wait_on
 from pycompss.api.constraint import constraint
 from socket import timeout
 from utils import pixel2GPS
-import track
 import deduplicator as dd
 import paho.mqtt.client as mqtt
+import track
 # import threading
 
 NUM_ITERS = 60
@@ -125,7 +125,10 @@ def dump(id_cam, ts, trackers, iteration, list_boxes, info_for_deduplicator):
         f = open(filename, "w+")
         f.close()
     with open(filename, "a+") as f:
-        for i, tracker in enumerate([t for t in trackers if t.traj[-1].frame == iteration]):
+        # for i, tracker in enumerate([t for t in trackers if t.traj[-1].frame == iteration]):
+        for i, tracker in enumerate(trackers):
+            if tracker.id not in [t.id for t in trackers if t.traj[-1].frame == iteration]:
+                continue
             lat = info_for_deduplicator[i][0]  # round(info_for_deduplicator[i][0], 14)
             lon = info_for_deduplicator[i][1]  # round(info_for_deduplicator[i][1], 14)
             geohash = pgh.encode(lat, lon, precision=7)
@@ -344,6 +347,9 @@ def on_message(client, userdata, message):
     received_time = time.time()
     msg = str(message.payload.decode('utf-8'))
     print(f"Received message = \"{msg}\" at time {received_time}")
+    f = open("cd_log.txt", "a")
+    f.write(msg)
+    f.close()
 
 
 def publish_mqtt(client):
@@ -381,6 +387,7 @@ def main():
     # Register MQTT client to subscribe to MQTT server in 192.168.7.42
     if mqtt_wait:
         client = register_mqtt()
+        client.loop_start()
 
     # initialize all computing units in all workers
     num_cus = 8
