@@ -56,7 +56,7 @@ def receive_boxes(socket_ip, dummy):
 
 
 @constraint(AppSoftware="xavier")
-@task(returns=4, )
+@task(returns=5, )
 def receive_boxes(pipe_paths, dummy):
     import struct
 
@@ -77,17 +77,23 @@ def receive_boxes(pipe_paths, dummy):
     cam_id = struct.unpack_from("i", message[1:1 + int_size])[0]
     timestamp = struct.unpack_from("Q", message[1 + int_size:1 + int_size + unsigned_long_size])[0]
     pixels = [] # for logging purposes it is needed
+    box_coords = []
     i = 0
     for offset in range(1 + int_size + unsigned_long_size, len(message),
-                        double_size * 4 + int_size + 1 + float_size * 4):
-        north, east, lat, lon, frame_number, obj_class = struct.unpack_from('ddddIc', message[
-                                                                        offset:offset + double_size * 4 + int_size + 1])
-        x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 4 + int_size + 1:])
-        boxes.append(track.obj_m(north, east, frame_number, ord(obj_class), int(w), int(h), lat, lon, int(x), int(y)))
+                        double_size * 10 + int_size + 1 + float_size * 4):
+        north, east, frame_number, obj_class = struct.unpack_from('ddIc', message[
+                                                                        offset:offset + double_size * 2 + int_size + 1])
+        x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 2 + int_size + 1:offset + double_size * 2
+                                                                        + int_size + 1 + float_size * 4])
+        boxes.append(track.obj_m(north, east, frame_number, ord(obj_class), int(w), int(h), int(x), int(y)))
+        lat_ur, lon_ur, lat_lr, lon_lr, lat_ll, lon_ll, lat_ul, lon_ul = struct.unpack_from('dddddddd', message[
+                                                                        offset + double_size * 2 + int_size + 1 +
+                                                                        float_size * 4:])
+        box_coords.append((lat_ur, lon_ur, lat_lr, lon_lr, lat_ll, lon_ll, lat_ul, lon_ul))
         # pixels.append((x, y))
         print(f"{i} X: {x + w / 2} Y: {y + h / 2} NORTH: {north} EAST: {east} W: {w} H: {h}")
     # return cam_id, timestamp, boxes, dummy # TODO: added x, y (pixels) as they are not in list_boxes anymore
-    return cam_id, timestamp, boxes, dummy  #, pixels # for logging purposes it is needed
+    return cam_id, timestamp, boxes, dummy, box_coords  #, pixels # for logging purposes it is needed
 
 
 @task(returns=3, )
@@ -131,8 +137,8 @@ def dump(id_cam, ts, trackers, iteration, list_boxes, info_for_deduplicator):
             lon = info_for_deduplicator[i][1]  # round(info_for_deduplicator[i][1], 14)
             geohash = pgh.encode(lat, lon, precision=7)
             cl = info_for_deduplicator[i][2]
-            speed = info_for_deduplicator[i][3]
-            yaw = info_for_deduplicator[i][4]
+            speed = abs(tracker.ekf.xEst.vel)  # info_for_deduplicator[i][3]
+            yaw = tracker.ekf.xEst.yaw  # info_for_deduplicator[i][4]
             pixel_x = info_for_deduplicator[i][6]  # OR list_boxes[tracker.idx].x  # pixels[tracker.idx][0]
             pixel_y = info_for_deduplicator[i][7]  # pixels[tracker.idx][1]
             # f.write(
@@ -140,7 +146,10 @@ def dump(id_cam, ts, trackers, iteration, list_boxes, info_for_deduplicator):
             # {tracker.idx].x} {list_boxes[tracker.idx].y} {list_boxes[tracker.idx].w} {list_boxes[tracker.idx].h}\n")
             f.write(
                 f"{id_cam} {iteration} {ts} {cl} {lat} {lon} {geohash} {speed} {yaw} {id_cam}_{tracker.id} {pixel_x} \
-                {pixel_y} {list_boxes[tracker.idx].w} {list_boxes[tracker.idx].h}\n")
+                {pixel_y} {list_boxes[tracker.idx].w} {list_boxes[tracker.idx].h} {boxCoords[tracker.idx][0]} \
+                {boxCoords[tracker.idx][1]} {boxCoords[tracker.idx][2]} {boxCoords[tracker.idx][3]} \
+                {boxCoords[tracker.idx][4]} {boxCoords[tracker.idx][5]} {boxCoords[tracker.idx][6]} \
+                {boxCoords[tracker.idx][7]}\n")
 
 
 @constraint(AppSoftware="xavier")
@@ -166,6 +175,7 @@ def persist_info(trackers, count, kb):
     return snapshot
 
 
+@constraint(AppSoftware="xavier")
 @task(snapshot=IN, dataclay_to_federate=IN)
 def federate_info(snapshot, dataclay_to_federate):
     from CityNS.classes import FederationInfo
@@ -179,6 +189,7 @@ def federate_info(snapshot, dataclay_to_federate):
     federation_info.federate(dataclay_to_federate)
 
 
+@constraint(AppSoftware="xavier")
 @task(snapshots=COLLECTION_IN, dataclay_to_federate=IN)
 def federate_info_accumulated(snapshots, dataclay_to_federate):
     from CityNS.classes import FederationInfo
@@ -244,7 +255,7 @@ def init_task():
     obj.get_events_history(20)
     list_objs = ListOfObjects()
     list_objs.make_persistent("FAKE_LISTOBJ_" + str(uuid.uuid4()))
-    list_objs.get_or_create("FAKE_LISTOBJ_" + str(uuid.uuid4()), "FAKE")
+    list_objs.get_or_create("FAKE_LISTOBJ_" + str(uuid.uuid4()), "FAKE", 0, 0, 0, 0)
     federation_info = FederationInfo([snap])
     federation_info.make_persistent()
     federation_info.objects_per_snapshot # to load dataclay class and libraries
@@ -274,6 +285,7 @@ def execute_trackers(pipe_paths, kb, client):
     timestamps = [0] * len(socket_ips)
     deduplicated_trackers_list = []  # TODO: to accumulate trackers
     # pixels = [0] * len(pipe_paths)
+    box_coords = [0] * len(socket_ips)
 
     federation_ip, federation_port = "192.168.7.32", 11034  # TODO: change port accordingly
     # federation_ip, federation_port = "192.168.7.32", 21034 # TODO: change port accordingly
@@ -285,14 +297,14 @@ def execute_trackers(pipe_paths, kb, client):
     while i < NUM_ITERS:
         for index, pipe_path in enumerate(pipe_paths):
             # cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], pixels[index] = \
-            cam_ids[index], timestamps[index], list_boxes, reception_dummies[index] = \
+            cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], box_coords[index] = \
                 receive_boxes(pipe_path, reception_dummies[index])
             trackers_list[index], cur_index[index], info_for_deduplicator[index] = execute_tracking(list_boxes,
                                                                                                     trackers_list[index],
                                                                                                     cur_index[index])
             # print(f"CAM ID: {cam_ids[index]}, timestamp: {timestamps[index]}, list_boxes: {[list_boxes]}")
             # dump(cam_ids[index], timestamps[index], trackers_list[index], i, list_boxes, \
-            # info_for_deduplicator[index])
+            # info_for_deduplicator[index], box_coords[index])
 
         # trackers, tracker_indexes, cur_index = merge_tracker_state(trackers_list)
         deduplicated_trackers = deduplicate(info_for_deduplicator) # , cam_ids, timestamps) # TODO: pass cam_ids and timestamps
@@ -312,8 +324,7 @@ def execute_trackers(pipe_paths, kb, client):
             pixel_y = info_for_deduplicator[0][idx][7]
             pixel_w = info_for_deduplicator[0][idx][8]
             pixel_h = info_for_deduplicator[0][idx][9]
-            return_dedu.append((cam_ids[0], tracker.id, cl, vel, yaw, lat, lon, track_id, pixel_x, pixel_y, \
-                        pixel_w, pixel_h))
+            return_dedu.append((cam_ids[0], tracker.id, cl, vel, yaw, lat, lon, pixel_x, pixel_y, pixel_w, pixel_h))
         deduplicated_trackers = (timestamps[0], return_dedu)
         # print(deduplicated_trackers)
         """
@@ -362,7 +373,7 @@ def publish_mqtt(client):
 
 
 def register_mqtt():
-    client=mqtt.Client()
+    client = mqtt.Client()
     try:
         client.connect("192.168.7.42") # MQTT server in Modena cloud
     except timeout as e:
@@ -381,12 +392,17 @@ def main():
     from dataclay.api import init, finish
     from dataclay.exceptions.exceptions import DataClayException
 
+    mqtt_wait = False
+    if len(sys.argv) == 2:
+        mqtt_wait = (sys.argv[1] != "False")
+
     init()
     from CityNS.classes import DKB, ListOfObjects
 
     # Register MQTT client to subscribe to MQTT server in 192.168.7.42
-    client = register_mqtt()
-    client.loop_start()
+    if mqtt_wait:
+        client = register_mqtt()
+        client.loop_start()
 
     # initialize all computing units in all workers
     num_cus = 8
@@ -395,7 +411,8 @@ def main():
     compss_barrier()
 
     # Publish to the MQTT broker that the execution has started
-    publish_mqtt(client)
+    if mqtt_wait:
+        publish_mqtt(client)
 
     try:
         kb = DKB.get_by_alias("DKB")
