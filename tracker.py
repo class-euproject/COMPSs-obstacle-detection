@@ -24,7 +24,7 @@ def execute_tracking(list_boxes, trackers, cur_index):
 
 """
 # @constraint(AppSoftware="xavier")
-@task(returns=4,)
+@task(returns=5,)
 def receive_boxes(socket_ip, dummy):
     import zmq
     import struct
@@ -48,14 +48,20 @@ def receive_boxes(socket_ip, dummy):
     # This flag serves to know if the video has ended
     cam_id = struct.unpack_from("i", message[1:1 + int_size])[0]
     timestamp = struct.unpack_from("Q", message[1 + int_size:1 + int_size + unsigned_long_size])[0]
-
-    for offset in range(1 + int_size + unsigned_long_size, len(message), double_size * 4 + int_size + 1 + float_size * 4):
-        north, east, lat, lon, frame_number, obj_class = struct.unpack_from('ddddIc', message[
-                                                                          offset:offset + double_size * 4 + int_size + 1])
-        x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 4 + int_size + 1:])
+    box_coords = []
+    for offset in range(1 + int_size + unsigned_long_size, len(message), 
+                        double_size * 10 + int_size + 1 + float_size * 4):
+        north, east, frame_number, obj_class = struct.unpack_from('ddIc', message[
+                                                                        offset:offset + double_size * 2 + int_size + 1])
+        x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 2 + int_size + 1:offset + double_size * 2
+                                                                        + int_size + 1 + float_size * 4])
         # print((coord_north, coord_east, frame_number, ord(obj_class), x, y, w, h))
-        boxes.append(track.obj_m(north, east, frame_number, ord(obj_class), int(w), int(h), lat, lon))
-    return cam_id, timestamp, boxes, dummy
+        boxes.append(track.obj_m(north, east, frame_number, ord(obj_class), int(w), int(h), int(x), int(y), 0.0))
+        lat_ur, lon_ur, lat_lr, lon_lr, lat_ll, lon_ll, lat_ul, lon_ul = struct.unpack_from('dddddddd', message[
+                                                                        offset + double_size * 2 + int_size + 1 +
+                                                                        float_size * 4:])
+        box_coords.append((lat_ur, lon_ur, lat_lr, lon_lr, lat_ll, lon_ll, lat_ul, lon_ul))
+    return cam_id, timestamp, boxes, dummy, box_coords
 """
 
 
@@ -80,7 +86,7 @@ def receive_boxes(pipe_paths, dummy):
     # This flag serves to know if the video has ended
     cam_id = struct.unpack_from("i", message[1:1 + int_size])[0]
     timestamp = struct.unpack_from("Q", message[1 + int_size:1 + int_size + unsigned_long_size])[0]
-    pixels = [] # for logging purposes it is needed
+    # pixels = []  # for logging purposes it is needed
     box_coords = []
     for offset in range(1 + int_size + unsigned_long_size, len(message),
                         double_size * 10 + int_size + 1 + float_size * 4):
@@ -95,7 +101,7 @@ def receive_boxes(pipe_paths, dummy):
         box_coords.append((lat_ur, lon_ur, lat_lr, lon_lr, lat_ll, lon_ll, lat_ul, lon_ul))
         # pixels.append((x, y))
     # return cam_id, timestamp, boxes, dummy # TODO: added x, y (pixels) as they are not in list_boxes anymore
-    return cam_id, timestamp, boxes, dummy, box_coords  #, pixels for logging purposes it is needed
+    return cam_id, timestamp, boxes, dummy, box_coords
 
 
 @task(returns=3, )
@@ -113,11 +119,10 @@ def merge_tracker_state(trackers_list, cur_index):
 
 
 # @constraint(AppSoftware="nvidia")
-@task(trackers_list=COLLECTION_IN)
+@task(trackers_list=COLLECTION_IN, cam_ids=COLLECTION_IN)
 # def deduplicate(trackers_list, cam_ids, timestamps): # TODO: waiting for UNIMORE
-def deduplicate(trackers_list):
-    return_message = dd.compute_deduplicator(trackers_list)
-    # return_message = dd.compute_deduplicator(trackers_list, cam_ids, timestamps) # TODO: waiting for UNIMORE
+def deduplicate(trackers_list, cam_ids):
+    return_message = dd.compute_deduplicator(trackers_list, cam_ids)
     # print(f"Returned {len(return_message)} objects (from the original "
     #      f"{' + '.join([str(len(t)) for t in trackers_list])} = {sum([len(t) for t in trackers_list])})")
     return return_message
@@ -273,21 +278,21 @@ def execute_trackers(pipe_paths, kb):
     import os
     from dataclay.api import get_dataclay_id
 
-    trackers_list = [[]] * len(socket_ips)
-    cur_index = [0] * len(socket_ips)
-    info_for_deduplicator = [0] * len(socket_ips)
+    trackers_list = [[]] * len(pipe_paths)
+    cur_index = [0] * len(pipe_paths)
+    info_for_deduplicator = [0] * len(pipe_paths)
     snapshots = list()  # accumulate snapshots
-    cam_ids = [0] * len(socket_ips)
-    timestamps = [0] * len(socket_ips)
+    cam_ids = [0] * len(pipe_paths)
+    timestamps = [0] * len(pipe_paths)
     deduplicated_trackers_list = []  # TODO: accumulate trackers
-    box_coords = [0] * len(socket_ips)
+    box_coords = [0] * len(pipe_paths)
 
     federation_ip, federation_port = "192.168.7.32", 11034  # TODO: change port accordingly
     # federation_ip, federation_port = "192.168.50.103", 21034 # TODO: change port accordingly
     dataclay_to_federate = get_dataclay_id(federation_ip, federation_port)
 
     i = 0
-    reception_dummies = [0] * len(socket_ips)
+    reception_dummies = [0] * len(pipe_paths)
     start_time = time.time()
     while i < NUM_ITERS:
         for index, pipe_path in enumerate(pipe_paths):
@@ -299,10 +304,10 @@ def execute_trackers(pipe_paths, kb):
                                                                                                     cur_index[index])
             # print(f"CAM ID: {cam_ids[index]}, timestamp: {timestamps[index]}, list_boxes: {[list_boxes]}")
             # dump(cam_ids[index], timestamps[index], trackers_list[index], i, list_boxes, \
-            # info_for_deduplicator[index]), box_coords[index]  #, pixels[index])
+            # info_for_deduplicator[index]), box_coords[index])  #, pixels[index])
 
         # trackers, tracker_indexes, cur_index = merge_tracker_state(trackers_list)
-        deduplicated_trackers = deduplicate(info_for_deduplicator) # , cam_ids, timestamps) # pass cam_ids and timestamp
+        deduplicated_trackers = deduplicate(info_for_deduplicator, cam_ids) # , cam_ids, timestamps) # pass cam_ids and timestamp
         # deduplicated_trackers_list.append(deduplicated_trackers) # TODO: accumulate trackers
         """
         for trackers in trackers_list:
@@ -420,6 +425,7 @@ def main():
     start_time = time.time()
     # execute_trackers(["192.168.50.103"], kb)
     execute_trackers([("/tmp/pipe_yolo2COMPSs", "/tmp/pipe_COMPSs2yolo")], kb)
+    # pipe_paths = [("/tmp/pipe_yolo2COMPSs", "/tmp/pipe_COMPSs2yolo"), ("/tmp/pipe_write",  "/tmp/pipe_read")]
     # print("ExecTime: " + str(time.time() - start_time))
     # print("ExecTime per Iteration: " + str((time.time() - start_time) / NUM_ITERS))
 
