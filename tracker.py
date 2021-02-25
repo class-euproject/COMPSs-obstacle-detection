@@ -17,9 +17,9 @@ CD_PROC = 0
 
 
 # @constraint(AppSoftware="nvidia")
-@task(returns=3, list_boxes=IN, trackers=IN, cur_index=IN)
-def execute_tracking(list_boxes, trackers, cur_index):
-    return track.track2(list_boxes, trackers, cur_index)
+@task(returns=3, list_boxes=IN, trackers=IN, cur_index=IN, init_point=IN)
+def execute_tracking(list_boxes, trackers, cur_index, init_point):
+    return track.track2(list_boxes, trackers, cur_index, init_point)
 
 
 """
@@ -66,7 +66,7 @@ def receive_boxes(socket_ip, dummy):
 
 
 @constraint(AppSoftware="xavier")
-@task(returns=5, )
+@task(returns=6, )
 def receive_boxes(pipe_paths, dummy):
     import struct
 
@@ -88,7 +88,10 @@ def receive_boxes(pipe_paths, dummy):
     timestamp = struct.unpack_from("Q", message[1 + int_size:1 + int_size + unsigned_long_size])[0]
     # pixels = []  # for logging purposes it is needed
     box_coords = []
-    for offset in range(1 + int_size + unsigned_long_size, len(message),
+    lat, lon = struct.unpack_from("dd", message[1 + int_size + unsigned_long_size:1 + int_size + unsigned_long_size
+                                                                                  + double_size * 2])
+    init_point = (lat, lon)
+    for offset in range(1 + int_size + unsigned_long_size + double_size * 2, len(message),
                         double_size * 10 + int_size + 1 + float_size * 4):
         north, east, frame_number, obj_class = struct.unpack_from('ddIc', message[
                                                                         offset:offset + double_size * 2 + int_size + 1])
@@ -101,7 +104,7 @@ def receive_boxes(pipe_paths, dummy):
         box_coords.append((lat_ur, lon_ur, lat_lr, lon_lr, lat_ll, lon_ll, lat_ul, lon_ul))
         # pixels.append((x, y))
     # return cam_id, timestamp, boxes, dummy # TODO: added x, y (pixels) as they are not in list_boxes anymore
-    return cam_id, timestamp, boxes, dummy, box_coords
+    return cam_id, timestamp, boxes, dummy, box_coords, init_point
 
 
 @task(returns=3, )
@@ -119,9 +122,8 @@ def merge_tracker_state(trackers_list, cur_index):
 
 
 # @constraint(AppSoftware="nvidia")
-@task(trackers_list=COLLECTION_IN, cam_ids=COLLECTION_IN)
-# def deduplicate(trackers_list, cam_ids, timestamps): # TODO: waiting for UNIMORE
-def deduplicate(trackers_list, cam_ids):
+@task(trackers_list=COLLECTION_IN, cam_ids=COLLECTION_IN)  # , init_point=IN)
+def deduplicate(trackers_list, cam_ids):  # init_point):
     return_message = dd.compute_deduplicator(trackers_list, cam_ids)
     # print(f"Returned {len(return_message)} objects (from the original "
     #      f"{' + '.join([str(len(t)) for t in trackers_list])} = {sum([len(t) for t in trackers_list])})")
@@ -137,17 +139,18 @@ def dump(id_cam, ts, trackers, iteration, list_boxes, info_for_deduplicator, box
         f.close()
     with open(filename, "a+") as f:
         # for i, tracker in enumerate([t for t in trackers if t.traj[-1].frame == iteration]):
+        idx = 0
         for i, tracker in enumerate(trackers):
             if tracker.id not in [t.id for t in trackers if t.traj[-1].frame == iteration]:
                 continue
-            lat = info_for_deduplicator[i][0]  # round(info_for_deduplicator[i][0], 14)
-            lon = info_for_deduplicator[i][1]  # round(info_for_deduplicator[i][1], 14)
+            lat = info_for_deduplicator[idx][0]  # round(info_for_deduplicator[i][0], 14)
+            lon = info_for_deduplicator[idx][1]  # round(info_for_deduplicator[i][1], 14)
             geohash = pgh.encode(lat, lon, precision=7)
-            cl = info_for_deduplicator[i][2]
+            cl = info_for_deduplicator[idx][2]
             speed = abs(tracker.ekf.xEst.vel)  # info_for_deduplicator[i][3]
             yaw = tracker.ekf.xEst.yaw  # info_for_deduplicator[i][4]
-            pixel_x = info_for_deduplicator[i][6]  # OR list_boxes[tracker.idx].x  # pixels[tracker.idx][0]
-            pixel_y = info_for_deduplicator[i][7]  # pixels[tracker.idx][1]
+            pixel_x = info_for_deduplicator[idx][6]  # OR list_boxes[tracker.idx].x  # pixels[tracker.idx][0]
+            pixel_y = info_for_deduplicator[idx][7]  # pixels[tracker.idx][1]
             f.write(
                 # f"{id_cam} {iteration} {ts} {cl} {lat:.14f} {lon:.14f} {geohash} {speed} {yaw} {id_cam}_{tracker.id} \
                 f"{id_cam} {iteration} {ts} {cl} {lat} {lon} {geohash} {speed} {yaw} {id_cam}_{tracker.id} {pixel_x} \
@@ -155,6 +158,7 @@ def dump(id_cam, ts, trackers, iteration, list_boxes, info_for_deduplicator, box
                 {boxCoords[tracker.idx][1]} {boxCoords[tracker.idx][2]} {boxCoords[tracker.idx][3]} \
                 {boxCoords[tracker.idx][4]} {boxCoords[tracker.idx][5]} {boxCoords[tracker.idx][6]} \
                 {boxCoords[tracker.idx][7]}\n")
+            idx += 1
 
 
 @constraint(AppSoftware="xavier")
@@ -297,17 +301,18 @@ def execute_trackers(pipe_paths, kb):
     while i < NUM_ITERS:
         for index, pipe_path in enumerate(pipe_paths):
             # cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], pixels[index], sizes[index] = \
-            cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], box_coords[index] = \
+            cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], box_coords[index], init_point = \
                 receive_boxes(pipe_path, reception_dummies[index])
             trackers_list[index], cur_index[index], info_for_deduplicator[index] = execute_tracking(list_boxes,
                                                                                                     trackers_list[index],
-                                                                                                    cur_index[index])
+                                                                                                    cur_index[index],
+                                                                                                    init_point)
             # print(f"CAM ID: {cam_ids[index]}, timestamp: {timestamps[index]}, list_boxes: {[list_boxes]}")
             # dump(cam_ids[index], timestamps[index], trackers_list[index], i, list_boxes, \
             # info_for_deduplicator[index]), box_coords[index])  #, pixels[index])
 
         # trackers, tracker_indexes, cur_index = merge_tracker_state(trackers_list)
-        deduplicated_trackers = deduplicate(info_for_deduplicator, cam_ids) # , cam_ids, timestamps) # pass cam_ids and timestamp
+        deduplicated_trackers = deduplicate(info_for_deduplicator, cam_ids) # , init_point) # pass init point for gc
         # deduplicated_trackers_list.append(deduplicated_trackers) # TODO: accumulate trackers
         """
         for trackers in trackers_list:
