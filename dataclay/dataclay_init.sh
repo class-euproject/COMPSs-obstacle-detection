@@ -1,6 +1,6 @@
-#!/bin/sh
-set -x
-set -e
+#!/bin/bash
+# set -x
+# set -e
 
 CONTRACT_ID_FILE=${DC_SHARED_VOLUME}/${NAMESPACE}_contractid
 
@@ -22,4 +22,4 @@ export CONTRACT_ID=`cat ${CONTRACT_ID_FILE}`
 
 mkdir -p ${STUBSPATH}
 # Execute command
-exec python ../tracker.py "$@"
+# exec python ../tracker.py "$@"
