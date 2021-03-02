@@ -404,9 +404,23 @@ def main():
     from dataclay.api import init, finish
     from dataclay.exceptions.exceptions import DataClayException
 
+    import os
+    from dataclay.tool.functions import get_stubs
+    from pathlib import Path
+    USERNAME = os.getenv("USER", "defaultUser")
+    PASSWORD = os.getenv("PASS", "defaultPass")
+    NAMESPACE = os.getenv("NAMESPACE", "defaultNS")
+    STUBSPATH = os.getenv("STUBSPATH")
+    CONTRACT_ID = Path(os.getenv("CONTRACT_ID_PATH")).read_text()[:-1]
+    print(f"Getting stubs for user {USERNAME}, with contract ID {CONTRACT_ID}, at {STUBSPATH}")
+    get_stubs(USERNAME, PASSWORD, CONTRACT_ID, STUBSPATH)
+
+    if len(sys.argv) != 2:
+        print("Incorrect number of params: python3 tracker.py ${TKDNN_IP} ${MQTT_ACTIVE} (optional)")
     mqtt_wait = False
-    if len(sys.argv) == 2:
-        mqtt_wait = (sys.argv[1] != "False")
+    tkdnn_ip = sys.argv[1]
+    if len(sys.argv) == 3:
+        mqtt_wait = (sys.argv[2] != "False")
 
     init()
     from CityNS.classes import DKB, ListOfObjects
@@ -436,7 +450,7 @@ def main():
         kb.make_persistent("DKB")
 
     start_time = time.time()
-    execute_trackers(["192.168.50.103"], kb)
+    execute_trackers([tkdnn_ip], kb)
     #execute_trackers([("/tmp/pipe_yolo2COMPSs", "/tmp/pipe_COMPSs2yolo")], kb)
     # pipe_paths = [("/tmp/pipe_yolo2COMPSs", "/tmp/pipe_COMPSs2yolo"), ("/tmp/pipe_write",  "/tmp/pipe_read")]
     # print("ExecTime: " + str(time.time() - start_time))
