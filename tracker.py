@@ -18,9 +18,9 @@ CD_PROC = 0
 
 
 # @constraint(AppSoftware="nvidia")
-@task(returns=3, list_boxes=IN, trackers=IN, cur_index=IN)
-def execute_tracking(list_boxes, trackers, cur_index):
-    return track.track2(list_boxes, trackers, cur_index)
+@task(returns=3, list_boxes=IN, trackers=IN, cur_index=IN, init_point=IN)
+def execute_tracking(list_boxes, trackers, cur_index, init_point):
+    return track.track2(list_boxes, trackers, cur_index, init_point)
 
 
 
@@ -61,6 +61,9 @@ def receive_boxes(socket_ip, dummy):
     timestamp = struct.unpack_from("Q", message[1 + int_size:1 + int_size + unsigned_long_size])[0]
     # pixels = []  # for logging purposes it is needed
     box_coords = []
+    lat, lon = struct.unpack_from("dd", message[1 + int_size + unsigned_long_size:1 + int_size + unsigned_long_size
+                                                                                  + double_size * 2])
+    init_point = (lat, lon)
     for offset in range(1 + int_size + unsigned_long_size, len(message),
                         double_size * 10 + int_size + 1 + float_size * 4):
         north, east, frame_number, obj_class = struct.unpack_from('ddIc', message[
@@ -74,7 +77,7 @@ def receive_boxes(socket_ip, dummy):
         box_coords.append((lat_ur, lon_ur, lat_lr, lon_lr, lat_ll, lon_ll, lat_ul, lon_ul))
         # pixels.append((x, y))
     # return cam_id, timestamp, boxes, dummy # TODO: added x, y (pixels) as they are not in list_boxes anymore
-    return cam_id, timestamp, boxes, dummy, box_coords
+    return cam_id, timestamp, boxes, dummy, box_coords, init_point
 
 
 
@@ -310,11 +313,12 @@ def execute_trackers(socket_ips, kb):
     while i < NUM_ITERS:
         for index, socket_ip in enumerate(socket_ips):
             # cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], pixels[index], sizes[index] = \
-            cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], box_coords[index] = \
+            cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], box_coords[index], init_point = \
                 receive_boxes(socket_ip, reception_dummies[index])
             trackers_list[index], cur_index[index], info_for_deduplicator[index] = execute_tracking(list_boxes,
                                                                                                     trackers_list[index],
-                                                                                                    cur_index[index])
+                                                                                                    cur_index[index],
+                                                                                                    init_point)
             # print(f"CAM ID: {cam_ids[index]}, timestamp: {timestamps[index]}, list_boxes: {[list_boxes]}")
             # dump(cam_ids[index], timestamps[index], trackers_list[index], i, list_boxes, \
             # info_for_deduplicator[index]), box_coords[index])  #, pixels[index])
