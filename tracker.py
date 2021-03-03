@@ -411,6 +411,13 @@ def main():
     import os
     from dataclay.tool.functions import get_stubs
     from pathlib import Path
+    import os.path
+    from os import path
+    import time
+
+    while not path.exists(os.getenv("CONTRACT_ID_PATH")):
+        time.sleep(2)
+
     USERNAME = os.getenv("USER", "defaultUser")
     PASSWORD = os.getenv("PASS", "defaultPass")
     NAMESPACE = os.getenv("NAMESPACE", "defaultNS")
