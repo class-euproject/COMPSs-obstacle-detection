@@ -25,7 +25,7 @@ def execute_tracking(list_boxes, trackers, cur_index, init_point):
 
 
 # @constraint(AppSoftware="xavier")
-@task(returns=5,)
+@task(returns=6,)
 def receive_boxes(socket_ip, dummy):
     import zmq
     import struct
