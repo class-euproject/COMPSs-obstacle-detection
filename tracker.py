@@ -35,6 +35,7 @@ def receive_boxes(socket_ip, dummy):
     if ":" not in socket_ip:
         socket_ip += ":5559"
     
+    message = b""
     try:
         context = zmq.Context()
         sink = context.socket(zmq.REP)
@@ -45,7 +46,7 @@ def receive_boxes(socket_ip, dummy):
 
         boxes = []
 
-        time.sleep(1)
+        # time.sleep(1)
         message = sink.recv(zmq.NOBLOCK)
         sink.send_string("", zmq.NOBLOCK) 
   
