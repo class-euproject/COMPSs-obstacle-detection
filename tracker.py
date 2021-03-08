@@ -64,7 +64,7 @@ def receive_boxes(socket_ip, dummy):
     lat, lon = struct.unpack_from("dd", message[1 + int_size + unsigned_long_size:1 + int_size + unsigned_long_size
                                                                                   + double_size * 2])
     init_point = (lat, lon)
-    for offset in range(1 + int_size + unsigned_long_size, len(message),
+    for offset in range(1 + int_size + unsigned_long_size + double_size * 2, len(message),
                         double_size * 10 + int_size + 1 + float_size * 4):
         north, east, frame_number, obj_class = struct.unpack_from('ddIc', message[
                                                                         offset:offset + double_size * 2 + int_size + 1])
@@ -167,10 +167,10 @@ def dump(id_cam, ts, trackers, iteration, list_boxes, info_for_deduplicator, box
             f.write(
                 # f"{id_cam} {iteration} {ts} {cl} {lat:.14f} {lon:.14f} {geohash} {speed} {yaw} {id_cam}_{tracker.id} \
                 f"{id_cam} {iteration} {ts} {cl} {lat} {lon} {geohash} {speed} {yaw} {id_cam}_{tracker.id} {pixel_x} \
-                {pixel_y} {list_boxes[tracker.idx].w} {list_boxes[tracker.idx].h} {boxCoords[tracker.idx][0]} \
-                {boxCoords[tracker.idx][1]} {boxCoords[tracker.idx][2]} {boxCoords[tracker.idx][3]} \
-                {boxCoords[tracker.idx][4]} {boxCoords[tracker.idx][5]} {boxCoords[tracker.idx][6]} \
-                {boxCoords[tracker.idx][7]}\n")
+                {pixel_y} {list_boxes[tracker.idx].w} {list_boxes[tracker.idx].h} {box_coords[tracker.idx][0]} \
+                {box_coords[tracker.idx][1]} {box_coords[tracker.idx][2]} {box_coords[tracker.idx][3]} \
+                {box_coords[tracker.idx][4]} {box_coords[tracker.idx][5]} {box_coords[tracker.idx][6]} \
+                {box_coords[tracker.idx][7]}\n")
 
 
 @constraint(AppSoftware="xavier")
@@ -351,13 +351,13 @@ def execute_trackers(socket_ips, kb):
             snapshot = persist_info_accumulated(deduplicated_trackers_list, i, kb)
             deduplicated_trackers_list.clear() 
         """
-        #snapshot = persist_info(deduplicated_trackers, i, kb)
+        snapshot = persist_info(deduplicated_trackers, i, kb)
         """
         snapshots.append(snapshot)
         if i != 0 and (i+1) % SNAP_PER_FEDERATION == 0:
-            federate_info_accumulated(snapshots, kb, dataclay_to_federate)
+            federate_info_accumulated(snapshots, dataclay_to_federate)
         """
-        #federate_info(snapshot, kb, dataclay_to_federate)
+        federate_info(snapshot, dataclay_to_federate)
         i += 1
         # if i != 0 and i % 10 == 0:
         #     compss_barrier()
