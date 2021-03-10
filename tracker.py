@@ -36,50 +36,65 @@ def receive_boxes(socket_ip, dummy):
         socket_ip += ":5559"
     
     message = b""
-    try:
-        context = zmq.Context()
-        sink = context.socket(zmq.REP)
-        sink.connect(f"tcp://{socket_ip}") 
+    cam_id = None   
+    timestamp = None
+    boxes = None    
+    box_coords = None
+    init_point = None
+    no_read = True
 
-        double_size = unsigned_long_size = 8
-        int_size = float_size = 4
-
-        boxes = []
-
-        # time.sleep(1)
-        message = sink.recv(zmq.NOBLOCK)
-        sink.send_string("", zmq.NOBLOCK) 
-  
-    except zmq.ZMQError as e:
-        if e.errno == zmq.EAGAIN:
-            pass
-        else:
-            traceback.print_exc()
+    print("luka")
+   
+    context = zmq.Context()
+    sink = context.socket(zmq.REP)
+    sink.connect(f"tcp://{socket_ip}")
+    print("eudald")
     
-    flag = len(message) > 0
-    # This flag serves to know if the video has ended
-    cam_id = struct.unpack_from("i", message[1:1 + int_size])[0]
-    timestamp = struct.unpack_from("Q", message[1 + int_size:1 + int_size + unsigned_long_size])[0]
-    # pixels = []  # for logging purposes it is needed
-    box_coords = []
-    lat, lon = struct.unpack_from("dd", message[1 + int_size + unsigned_long_size:1 + int_size + unsigned_long_size
-                                                                                  + double_size * 2])
-    init_point = (lat, lon)
-    for offset in range(1 + int_size + unsigned_long_size + double_size * 2, len(message),
-                        double_size * 10 + int_size + 1 + float_size * 4):
-        north, east, frame_number, obj_class = struct.unpack_from('ddIc', message[
-                                                                        offset:offset + double_size * 2 + int_size + 1])
-        x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 2 + int_size + 1:offset + double_size * 2
-                                                                        + int_size + 1 + float_size * 4])
-        boxes.append(track.obj_m(north, east, frame_number, ord(obj_class), int(w), int(h), int(x), int(y), 0.0))
-        lat_ur, lon_ur, lat_lr, lon_lr, lat_ll, lon_ll, lat_ul, lon_ul = struct.unpack_from('dddddddd', message[
-                                                                        offset + double_size * 2 + int_size + 1 +
-                                                                        float_size * 4:])
-        box_coords.append((lat_ur, lon_ur, lat_lr, lon_lr, lat_ll, lon_ll, lat_ul, lon_ul))
-        # pixels.append((x, y))
-    # return cam_id, timestamp, boxes, dummy # TODO: added x, y (pixels) as they are not in list_boxes anymore
-    return cam_id, timestamp, boxes, dummy, box_coords, init_point
+    double_size = unsigned_long_size = 8
+    int_size = float_size = 4
+    boxes = []
 
+    while no_read:
+        try:
+            no_read = False
+            #time.sleep(0.05)
+            message = sink.recv(zmq.NOBLOCK)
+            sink.send_string("", zmq.NOBLOCK) 
+            print("edu")
+            
+    
+            flag = len(message) > 0
+            # This flag serves to know if the video has ended
+            cam_id = struct.unpack_from("i", message[1:1 + int_size])[0]
+            timestamp = struct.unpack_from("Q", message[1 + int_size:1 + int_size + unsigned_long_size])[0]
+            # pixels = []  # for logging purposes it is needed
+            box_coords = []
+            lat, lon = struct.unpack_from("dd", message[1 + int_size + unsigned_long_size:1 + int_size + unsigned_long_size
+                                                                                        + double_size * 2])
+            print("elli")
+            init_point = (lat, lon)
+            for offset in range(1 + int_size + unsigned_long_size + double_size * 2, len(message),
+                                double_size * 10 + int_size + 1 + float_size * 4):
+                north, east, frame_number, obj_class = struct.unpack_from('ddIc', message[
+                                                                                offset:offset + double_size * 2 + int_size + 1])
+                x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 2 + int_size + 1:offset + double_size * 2
+                                                                                + int_size + 1 + float_size * 4])
+                boxes.append(track.obj_m(north, east, frame_number, ord(obj_class), int(w), int(h), int(x), int(y), 0.0))
+                lat_ur, lon_ur, lat_lr, lon_lr, lat_ll, lon_ll, lat_ul, lon_ul = struct.unpack_from('dddddddd', message[
+                                                                                offset + double_size * 2 + int_size + 1 +
+                                                                                float_size * 4:])
+                box_coords.append((lat_ur, lon_ur, lat_lr, lon_lr, lat_ll, lon_ll, lat_ul, lon_ul))
+                # pixels.append((x, y))
+            # return cam_id, timestamp, boxes, dummy # TODO: added x, y (pixels) as they are not in list_boxes anymore
+        except zmq.ZMQError as e:
+            no_read = True
+            traceback.print_exc()
+            if e.errno == zmq.EAGAIN:
+                pass
+            else:
+                traceback.print_exc()
+    
+    return cam_id, timestamp, boxes, dummy, box_coords, init_point
 
 
 # @constraint(AppSoftware="xavier")
@@ -306,7 +321,7 @@ def execute_trackers(socket_ips, kb):
 
     federation_ip, federation_port = "192.168.7.32", 11034  # TODO: change port accordingly
     # federation_ip, federation_port = "192.168.50.103", 21034 # TODO: change port accordingly
-    dataclay_to_federate = get_dataclay_id(federation_ip, federation_port)
+    #dataclay_to_federate = get_dataclay_id(federation_ip, federation_port)
 
     i = 0
     reception_dummies = [0] * len(socket_ips)
@@ -352,13 +367,13 @@ def execute_trackers(socket_ips, kb):
             snapshot = persist_info_accumulated(deduplicated_trackers_list, i, kb)
             deduplicated_trackers_list.clear() 
         """
-        snapshot = persist_info(deduplicated_trackers, i, kb)
+        #snapshot = persist_info(deduplicated_trackers, i, kb)
         """
         snapshots.append(snapshot)
         if i != 0 and (i+1) % SNAP_PER_FEDERATION == 0:
             federate_info_accumulated(snapshots, dataclay_to_federate)
         """
-        federate_info(snapshot, dataclay_to_federate)
+        #federate_info(snapshot, dataclay_to_federate)
         i += 1
         # if i != 0 and i % 10 == 0:
         #     compss_barrier()
@@ -416,16 +431,16 @@ def main():
     from os import path
     import time
 
-    while not path.exists(os.getenv("CONTRACT_ID_PATH")):
-        time.sleep(2)
+    # while not path.exists(os.getenv("CONTRACT_ID_PATH")):
+    #     time.sleep(2)
 
-    USERNAME = os.getenv("USER", "defaultUser")
-    PASSWORD = os.getenv("PASS", "defaultPass")
-    NAMESPACE = os.getenv("NAMESPACE", "defaultNS")
-    STUBSPATH = os.getenv("STUBSPATH")
-    CONTRACT_ID = Path(os.getenv("CONTRACT_ID_PATH")).read_text()[:-1]
-    print(f"Getting stubs for user {USERNAME}, with contract ID {CONTRACT_ID}, at {STUBSPATH}")
-    get_stubs(USERNAME, PASSWORD, CONTRACT_ID, STUBSPATH)
+    # USERNAME = os.getenv("USER", "defaultUser")
+    # PASSWORD = os.getenv("PASS", "defaultPass")
+    # NAMESPACE = os.getenv("NAMESPACE", "defaultNS")
+    # STUBSPATH = os.getenv("STUBSPATH")
+    # CONTRACT_ID = Path(os.getenv("CONTRACT_ID_PATH")).read_text()[:-1]
+    # print(f"Getting stubs for user {USERNAME}, with contract ID {CONTRACT_ID}, at {STUBSPATH}")
+    # get_stubs(USERNAME, PASSWORD, CONTRACT_ID, STUBSPATH)
 
     if len(sys.argv) != 2:
         print("Incorrect number of params: python3 tracker.py ${TKDNN_IP} ${MQTT_ACTIVE} (optional)")
@@ -434,8 +449,8 @@ def main():
     if len(sys.argv) == 3:
         mqtt_wait = (sys.argv[2] != "False")
 
-    init()
-    from CityNS.classes import DKB, ListOfObjects
+    # init()
+    # from CityNS.classes import DKB, ListOfObjects
 
     # Register MQTT client to subscribe to MQTT server in 192.168.7.42
     if mqtt_wait:
@@ -443,24 +458,24 @@ def main():
         client.loop_start()
 
     # initialize all computing units in all workers
-    num_cus = 8
-    for i in range(num_cus):
-        init_task()
-    compss_barrier()
+    # num_cus = 8
+    # for i in range(num_cus):
+    #     init_task()
+    # compss_barrier()
 
     # Publish to the MQTT broker that the execution has started
     if mqtt_wait:
         publish_mqtt(client)
 
-    try:
-        kb = DKB.get_by_alias("DKB")
-    except DataClayException:
-        kb = DKB()
-        list_objects = ListOfObjects()
-        list_objects.make_persistent()
-        kb.list_objects = list_objects
-        kb.make_persistent("DKB")
-
+    # try:
+    #     kb = DKB.get_by_alias("DKB")
+    # except DataClayException:
+    #     kb = DKB()
+    #     list_objects = ListOfObjects()
+    #     list_objects.make_persistent()
+    #     kb.list_objects = list_objects
+    #     kb.make_persistent("DKB")
+    kb = None
     start_time = time.time()
     execute_trackers([tkdnn_ip], kb)
     #execute_trackers([("/tmp/pipe_yolo2COMPSs", "/tmp/pipe_COMPSs2yolo")], kb)
@@ -472,7 +487,7 @@ def main():
         while CD_PROC < NUM_ITERS:
             pass
     print("Exiting Application...")
-    finish()
+    #finish()
 
 
 if __name__ == "__main__":
