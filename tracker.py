@@ -43,13 +43,10 @@ def receive_boxes(socket_ip, dummy):
     init_point = None
     no_read = True
 
-    print("luka")
-   
     context = zmq.Context()
     sink = context.socket(zmq.REP)
     sink.connect(f"tcp://{socket_ip}")
-    print("eudald")
-    
+
     double_size = unsigned_long_size = 8
     int_size = float_size = 4
     boxes = []
@@ -60,9 +57,7 @@ def receive_boxes(socket_ip, dummy):
             #time.sleep(0.05)
             message = sink.recv(zmq.NOBLOCK)
             sink.send_string("", zmq.NOBLOCK) 
-            print("edu")
             
-    
             flag = len(message) > 0
             # This flag serves to know if the video has ended
             cam_id = struct.unpack_from("i", message[1:1 + int_size])[0]
@@ -71,7 +66,7 @@ def receive_boxes(socket_ip, dummy):
             box_coords = []
             lat, lon = struct.unpack_from("dd", message[1 + int_size + unsigned_long_size:1 + int_size + unsigned_long_size
                                                                                         + double_size * 2])
-            print("elli")
+    
             init_point = (lat, lon)
             for offset in range(1 + int_size + unsigned_long_size + double_size * 2, len(message),
                                 double_size * 10 + int_size + 1 + float_size * 4):
