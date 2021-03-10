@@ -1,13 +1,24 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Project>
     <MasterNode/>
-    <ComputeNode Name="IP1">
+    <!--<ComputeNode Name="127.0.0.1">
         <InstallDir>/opt/COMPSs/</InstallDir>
         <WorkingDir>/tmp/COMPSsWorker/</WorkingDir>
-	<User>USER1</User>
-        <Application>
-		<Pythonpath>PATH1</Pythonpath>
-        </Application>
+        <User>root</User>
     </ComputeNode>
+    <ComputeNode Name="192.168.12.1">
+        <InstallDir>/opt/COMPSs/</InstallDir>
+        <WorkingDir>/tmp/COMPSsWorker/</WorkingDir>
+        <User>bsc</User>
+    </ComputeNode>-->
+    <ComputeNode Name="192.168.12.2">
+        <InstallDir>/opt/COMPSs/</InstallDir>
+        <WorkingDir>/tmp/COMPSsWorker/</WorkingDir>
+        <User>bsc</User>
+    </ComputeNode>
+    <!--<ComputeNode Name="192.168.12.3">
+        <InstallDir>/opt/COMPSs/</InstallDir>
+        <WorkingDir>/tmp/COMPSsWorker/</WorkingDir>
+        <User>bsc</User>
+    </ComputeNode>-->
 </Project>
-
