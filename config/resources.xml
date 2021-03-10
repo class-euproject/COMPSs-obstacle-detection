@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <ResourcesList>
-<ComputeNode Name="IP1">
+<!--<ComputeNode Name="127.0.0.1">
         <Processor Name="MainProcessor">
             <ComputingUnits>1</ComputingUnits>
         </Processor>
@@ -10,10 +10,92 @@
                     <Interactive/>
                 </SubmissionSystem>
                 <Ports>
-                    <MinPort>43001</MinPort>
-                    <MaxPort>43002</MaxPort>
+                    <MinPort>43002</MinPort>
+                    <MaxPort>43003</MaxPort>
                 </Ports>
             </Adaptor>
-    	</Adaptors>
+        </Adaptors>
+        <Software>
+                <Application>nvidia</Application>
+                <Application>xavier</Application>
+        </Software>
 </ComputeNode>
+<ComputeNode Name="192.168.12.1">
+        <Processor Name="MainProcessor">
+            <ComputingUnits>1</ComputingUnits>
+        </Processor>
+        <Adaptors>
+            <Adaptor Name="es.bsc.compss.nio.master.NIOAdaptor">
+                <SubmissionSystem>
+                    <Interactive/>
+                </SubmissionSystem>
+                <Ports>
+                    <MinPort>43002</MinPort>
+                    <MaxPort>43003</MaxPort>
+                </Ports>
+        <Properties>
+                        <Property>
+                                <Name>Engine</Name>
+                                <Value>docker</Value>
+                        </Property>
+                        <Property>
+                                <Name>ImageName</Name>
+                                <Value>jesusperalesh/class-object-tracking</Value>
+                        </Property>
+                </Properties>
+            </Adaptor>
+        </Adaptors>
+</ComputeNode>-->
+<ComputeNode Name="192.168.12.2">
+        <Processor Name="MainProcessor">
+            <ComputingUnits>1</ComputingUnits>
+        </Processor>
+        <Adaptors>
+            <Adaptor Name="es.bsc.compss.nio.master.NIOAdaptor">
+                <SubmissionSystem>
+                    <Interactive/>
+                </SubmissionSystem>
+                <Ports>
+                    <MinPort>43002</MinPort>
+                    <MaxPort>43003</MaxPort>
+                </Ports>
+        <Properties>
+                        <Property>
+                                <Name>Engine</Name>
+                                <Value>docker</Value>
+                        </Property>
+                        <Property>
+                                <Name>ImageName</Name>
+                                <Value>jesusperalesh/nueva_imagen</Value>
+                        </Property>
+                </Properties>
+            </Adaptor>
+        </Adaptors>
+</ComputeNode>
+<!--<ComputeNode Name="192.168.12.3">
+        <Processor Name="MainProcessor">
+            <ComputingUnits>1</ComputingUnits>
+        </Processor>
+        <Adaptors>
+            <Adaptor Name="es.bsc.compss.nio.master.NIOAdaptor">
+                <SubmissionSystem>
+                    <Interactive/>
+                </SubmissionSystem>
+                <Ports>
+                    <MinPort>43002</MinPort>
+                    <MaxPort>43003</MaxPort>
+                </Ports>
+        <Properties>
+                        <Property>
+                                <Name>Engine</Name>
+                                <Value>docker</Value>
+                        </Property>
+                        <Property>
+                                <Name>ImageName</Name>
+                                <Value>jesusperalesh/class-object-tracking</Value>
+                        </Property>
+                </Properties>
+            </Adaptor>
+        </Adaptors>
+</ComputeNode>-->
 </ResourcesList>
