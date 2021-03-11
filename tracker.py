@@ -11,7 +11,7 @@ import track
 import socket
 # import threading
 
-NUM_ITERS = 60
+NUM_ITERS = 400
 SNAP_PER_FEDERATION = 15
 N = 5
 CD_PROC = 0
