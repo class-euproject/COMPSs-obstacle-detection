@@ -83,7 +83,7 @@ def receive_boxes(socket_ip, dummy):
             # return cam_id, timestamp, boxes, dummy # TODO: added x, y (pixels) as they are not in list_boxes anymore
         except zmq.ZMQError as e:
             no_read = True
-            traceback.print_exc()
+            # traceback.print_exc()
             if e.errno == zmq.EAGAIN:
                 pass
             else:
@@ -303,7 +303,7 @@ def execute_trackers(socket_ips, kb):
     import time
     import sys
     import os
-    from dataclay.api import get_dataclay_id
+    from dataclay.api import register_dataclay
 
     trackers_list = [[]] * len(socket_ips)
     cur_index = [0] * len(socket_ips)
@@ -316,7 +316,7 @@ def execute_trackers(socket_ips, kb):
 
     federation_ip, federation_port = "192.168.7.32", 11034  # TODO: change port accordingly
     # federation_ip, federation_port = "192.168.50.103", 21034 # TODO: change port accordingly
-    #dataclay_to_federate = get_dataclay_id(federation_ip, federation_port)
+    dataclay_to_federate = register_dataclay(federation_ip, federation_port)
 
     i = 0
     reception_dummies = [0] * len(socket_ips)
@@ -362,13 +362,13 @@ def execute_trackers(socket_ips, kb):
             snapshot = persist_info_accumulated(deduplicated_trackers_list, i, kb)
             deduplicated_trackers_list.clear() 
         """
-        #snapshot = persist_info(deduplicated_trackers, i, kb)
+        snapshot = persist_info(deduplicated_trackers, i, kb)
         """
         snapshots.append(snapshot)
         if i != 0 and (i+1) % SNAP_PER_FEDERATION == 0:
             federate_info_accumulated(snapshots, dataclay_to_federate)
         """
-        #federate_info(snapshot, dataclay_to_federate)
+        federate_info(snapshot, dataclay_to_federate)
         i += 1
         # if i != 0 and i % 10 == 0:
         #     compss_barrier()
@@ -426,16 +426,16 @@ def main():
     from os import path
     import time
 
-    # while not path.exists(os.getenv("CONTRACT_ID_PATH")):
-    #     time.sleep(2)
+    while not path.exists(os.getenv("CONTRACT_ID_PATH")):
+        time.sleep(2)
 
-    # USERNAME = os.getenv("USER", "defaultUser")
-    # PASSWORD = os.getenv("PASS", "defaultPass")
-    # NAMESPACE = os.getenv("NAMESPACE", "defaultNS")
-    # STUBSPATH = os.getenv("STUBSPATH")
-    # CONTRACT_ID = Path(os.getenv("CONTRACT_ID_PATH")).read_text()[:-1]
-    # print(f"Getting stubs for user {USERNAME}, with contract ID {CONTRACT_ID}, at {STUBSPATH}")
-    # get_stubs(USERNAME, PASSWORD, CONTRACT_ID, STUBSPATH)
+    USERNAME = os.getenv("USER", "defaultUser")
+    PASSWORD = os.getenv("PASS", "defaultPass")
+    NAMESPACE = os.getenv("NAMESPACE", "defaultNS")
+    STUBSPATH = os.getenv("STUBSPATH")
+    CONTRACT_ID = Path(os.getenv("CONTRACT_ID_PATH")).read_text()[:-1]
+    print(f"Getting stubs for user {USERNAME}, with contract ID {CONTRACT_ID}, at {STUBSPATH}")
+    get_stubs(USERNAME, PASSWORD, CONTRACT_ID, STUBSPATH)
 
     if len(sys.argv) != 2:
         print("Incorrect number of params: python3 tracker.py ${TKDNN_IP} ${MQTT_ACTIVE} (optional)")
@@ -444,8 +444,8 @@ def main():
     if len(sys.argv) == 3:
         mqtt_wait = (sys.argv[2] != "False")
 
-    # init()
-    # from CityNS.classes import DKB, ListOfObjects
+    init()
+    from CityNS.classes import DKB, ListOfObjects
 
     # Register MQTT client to subscribe to MQTT server in 192.168.7.42
     if mqtt_wait:
@@ -453,30 +453,26 @@ def main():
         client.loop_start()
 
     # initialize all computing units in all workers
-    # num_cus = 8
-    # for i in range(num_cus):
-    #     init_task()
-    # compss_barrier()
+    num_cus = 8
+    for i in range(num_cus):
+        init_task()
+    compss_barrier()
 
     # Publish to the MQTT broker that the execution has started
     if mqtt_wait:
         publish_mqtt(client)
 
-    # try:
-    #     kb = DKB.get_by_alias("DKB")
-    # except DataClayException:
-    #     kb = DKB()
-    #     list_objects = ListOfObjects()
-    #     list_objects.make_persistent()
-    #     kb.list_objects = list_objects
-    #     kb.make_persistent("DKB")
-    kb = None
+    try:
+        kb = DKB.get_by_alias("DKB")
+    except DataClayException:
+        kb = DKB()
+        list_objects = ListOfObjects()
+        list_objects.make_persistent()
+        kb.list_objects = list_objects
+        kb.make_persistent("DKB")
+    # kb = None
     start_time = time.time()
     execute_trackers([tkdnn_ip], kb)
-    #execute_trackers([("/tmp/pipe_yolo2COMPSs", "/tmp/pipe_COMPSs2yolo")], kb)
-    # pipe_paths = [("/tmp/pipe_yolo2COMPSs", "/tmp/pipe_COMPSs2yolo"), ("/tmp/pipe_write",  "/tmp/pipe_read")]
-    # print("ExecTime: " + str(time.time() - start_time))
-    # print("ExecTime per Iteration: " + str((time.time() - start_time) / NUM_ITERS))
 
     if mqtt_wait:
         while CD_PROC < NUM_ITERS:
