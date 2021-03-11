@@ -207,6 +207,7 @@ def persist_info(trackers, count, kb):
     return snapshot
 
 
+@constraint(AppSoftware="xavier")
 @task(snapshot=IN, dataclay_to_federate=IN)
 def federate_info(snapshot, dataclay_to_federate):
     from CityNS.classes import FederationInfo
