@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <ResourcesList>
-<!--<ComputeNode Name="127.0.0.1">
+<ComputeNode Name="192.168.12.4">
         <Processor Name="MainProcessor">
             <ComputingUnits>1</ComputingUnits>
         </Processor>
@@ -13,6 +13,20 @@
                     <MinPort>43002</MinPort>
                     <MaxPort>43003</MaxPort>
                 </Ports>
+		<Properties>
+                        <Property>
+                                <Name>Engine</Name>
+                                <Value>docker</Value>
+                        </Property>
+                        <Property>
+                                <Name>ImageName</Name>
+                                <Value>jesusperalesh/tracking_partial</Value>
+			</Property>
+			<Property>
+                                <Name>PullIfNeeded</Name>
+                                <Value>true</Value>
+                        </Property>
+                </Properties>
             </Adaptor>
         </Adaptors>
         <Software>
@@ -33,19 +47,23 @@
                     <MinPort>43002</MinPort>
                     <MaxPort>43003</MaxPort>
                 </Ports>
-        <Properties>
+                <Properties>
                         <Property>
                                 <Name>Engine</Name>
                                 <Value>docker</Value>
                         </Property>
                         <Property>
                                 <Name>ImageName</Name>
-                                <Value>jesusperalesh/class-object-tracking</Value>
+                                <Value>jesusperalesh/tracking_partial</Value>
+			</Property>
+			<Property>
+                                <Name>PullIfNeeded</Name>
+                                <Value>true</Value>
                         </Property>
                 </Properties>
             </Adaptor>
         </Adaptors>
-</ComputeNode>-->
+</ComputeNode>
 <ComputeNode Name="192.168.12.2">
         <Processor Name="MainProcessor">
             <ComputingUnits>1</ComputingUnits>
@@ -59,20 +77,24 @@
                     <MinPort>43002</MinPort>
                     <MaxPort>43003</MaxPort>
                 </Ports>
-        <Properties>
+                <Properties>
                         <Property>
                                 <Name>Engine</Name>
                                 <Value>docker</Value>
                         </Property>
                         <Property>
                                 <Name>ImageName</Name>
-                                <Value>jesusperalesh/nueva_imagen</Value>
+                                <Value>jesusperalesh/tracking_partial</Value>
+                        </Property>
+			<Property>
+                                <Name>PullIfNeeded</Name>
+                                <Value>true</Value>
                         </Property>
                 </Properties>
             </Adaptor>
         </Adaptors>
 </ComputeNode>
-<!--<ComputeNode Name="192.168.12.3">
+<ComputeNode Name="192.168.12.3">
         <Processor Name="MainProcessor">
             <ComputingUnits>1</ComputingUnits>
         </Processor>
@@ -85,17 +107,21 @@
                     <MinPort>43002</MinPort>
                     <MaxPort>43003</MaxPort>
                 </Ports>
-        <Properties>
+                <Properties>
                         <Property>
                                 <Name>Engine</Name>
                                 <Value>docker</Value>
                         </Property>
                         <Property>
                                 <Name>ImageName</Name>
-                                <Value>jesusperalesh/class-object-tracking</Value>
+                                <Value>jesusperalesh/tracking_partial</Value>
+			</Property>
+			<Property>
+                                <Name>PullIfNeeded</Name>
+                                <Value>true</Value>
                         </Property>
                 </Properties>
             </Adaptor>
         </Adaptors>
-</ComputeNode>-->
+</ComputeNode>
 </ResourcesList>

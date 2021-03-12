@@ -371,11 +371,11 @@ def execute_trackers(socket_ips, kb):
         """
         federate_info(snapshot, dataclay_to_federate)
         i += 1
-        # if i != 0 and i % 10 == 0:
-        #     compss_barrier()
-        #     input_path = "/home/nvidia/CLASS/class-app/phemlight/in/"
-        #     output_file = "results_" + str(uuid.uuid4()).split("-")[-1] + ".csv"
-        #     analyze_pollution(input_path, output_file)
+        if i != 0 and i % 10 == 0:
+            compss_barrier()
+            # input_path = "/home/nvidia/CLASS/class-app/phemlight/in/"
+            # output_file = "results_" + str(uuid.uuid4()).split("-")[-1] + ".csv"
+            # analyze_pollution(input_path, output_file)
 
     compss_barrier()
     end_time = time.time()
