@@ -3,11 +3,11 @@ def main():
     import subprocess
 
     # Env variables
-    dataclay_jar_path = "/root/COMPSs-obstacle-detection/dataclay/dataclay.jar"
+    dataclay_jar_path = "dataclay/dataclay.jar"
     user = "CityUser"
     password = "p4ssw0rd"
     namespace = "CityNS"
-    stubspath = "/root/COMPSs-obstacle-detection/stubs"
+    stubspath = "./stubs"
     
     # Connection to get contract_id
     contract_id = subprocess.check_output(f"java -cp {dataclay_jar_path} es.bsc.dataclay.tool.AccessNamespace {user} {password} {namespace} | tail -1", shell=True)[:-1].decode()
