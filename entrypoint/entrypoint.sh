@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
 
-python3 entrypoint.py
+python3 COMPSs-obstacle-detection/entrypoint/entrypoint.py
 
 exec "$@"
