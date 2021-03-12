@@ -11,7 +11,7 @@ def main():
     
     # Connection to get contract_id
     contract_id = None
-    while contractd_id is None:
+    while contract_id is None:
         try:
             contract_id = subprocess.check_output(f"java -cp {dataclay_jar_path} es.bsc.dataclay.tool.AccessNamespace {user} {password} {namespace} | tail -1", shell=True)[:-1].decode()
         except:
