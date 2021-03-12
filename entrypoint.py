@@ -24,6 +24,7 @@ def main():
             time.sleep(1)
 
     # Get stubs
+    print(f"CONTRACT ID OUTSIDE WHILE IS {contract_id}")
     get_stubs(user, password, contract_id, stubspath)
 
 
