@@ -1,6 +1,7 @@
 def main():
     from dataclay.tool.functions import get_stubs
     import subprocess
+    import time
 
     # Env variables
     dataclay_jar_path = "dataclay/dataclay.jar"
@@ -16,7 +17,8 @@ def main():
             contract_id = subprocess.check_output(f"java -cp {dataclay_jar_path} es.bsc.dataclay.tool.AccessNamespace {user} {password} {namespace} | tail -1", shell=True)[:-1].decode()
         except:
             contract_id = None
-            print(f"Waiting for contract_id to be set and ready from dataclay.")
+            print(f"Waiting for contract_id to be set and ready from dataclay...")
+            time.sleep(1)
 
     # Get stubs
     get_stubs(user, password, contract_id, stubspath)
