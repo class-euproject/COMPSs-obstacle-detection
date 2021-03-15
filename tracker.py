@@ -15,6 +15,7 @@ NUM_ITERS = 400
 SNAP_PER_FEDERATION = 15
 N = 5
 CD_PROC = 0
+mqtt_wait = True
 
 
 # @constraint(AppSoftware="nvidia")
@@ -419,14 +420,19 @@ def main():
     import time
     from dataclay.api import init, finish
     from dataclay.exceptions.exceptions import DataClayException
+    import argparse
 
-    if len(sys.argv) != 2:
-        print("Incorrect number of params: python3 tracker.py ${TKDNN_IP} ${MQTT_ACTIVE} (optional)")
-    mqtt_wait = False
-    tkdnn_ip = sys.argv[1]
-    if len(sys.argv) == 3:
-        mqtt_wait = (sys.argv[2] != "False")
+    # if len(sys.argv) != 2:
+    #     print("Incorrect number of params: python3 tracker.py ${TKDNN_IP} ${MQTT_ACTIVE} (optional)")
+    # tkdnn_ip = sys.argv[1]
+    # if len(sys.argv) == 3:
+    #     mqtt_wait = (sys.argv[2] != "False")
 
+    # Parse arguments to accept variable number of "IPs:Ports"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("tkdnn_ips", nargs='+')
+    args = parser.parse_args()
+    
     init()
     from CityNS.classes import DKB, ListOfObjects
 
@@ -455,7 +461,7 @@ def main():
         kb.make_persistent("DKB")
     # kb = None
     start_time = time.time()
-    execute_trackers([tkdnn_ip], kb)
+    execute_trackers(args.tkdnn_ips, kb)
 
     if mqtt_wait:
         while CD_PROC < NUM_ITERS:
