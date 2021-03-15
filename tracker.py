@@ -465,9 +465,12 @@ def main():
     start_time = time.time()
     execute_trackers(args.tkdnn_ips, kb)
 
+    """
     if mqtt_wait:
         while CD_PROC < NUM_ITERS:
             pass
+    """
+
     print("Exiting Application...")
     #finish()
 
