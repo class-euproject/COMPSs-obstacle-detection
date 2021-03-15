@@ -420,24 +420,6 @@ def main():
     from dataclay.api import init, finish
     from dataclay.exceptions.exceptions import DataClayException
 
-    import os
-    from dataclay.tool.functions import get_stubs
-    from pathlib import Path
-    import os.path
-    from os import path
-    import time
-
-    while not path.exists(os.getenv("CONTRACT_ID_PATH")):
-        time.sleep(2)
-
-    USERNAME = os.getenv("USER", "defaultUser")
-    PASSWORD = os.getenv("PASS", "defaultPass")
-    NAMESPACE = os.getenv("NAMESPACE", "defaultNS")
-    STUBSPATH = os.getenv("STUBSPATH")
-    CONTRACT_ID = Path(os.getenv("CONTRACT_ID_PATH")).read_text()[:-1]
-    print(f"Getting stubs for user {USERNAME}, with contract ID {CONTRACT_ID}, at {STUBSPATH}")
-    get_stubs(USERNAME, PASSWORD, CONTRACT_ID, STUBSPATH)
-
     if len(sys.argv) != 2:
         print("Incorrect number of params: python3 tracker.py ${TKDNN_IP} ${MQTT_ACTIVE} (optional)")
     mqtt_wait = False
