@@ -27,13 +27,13 @@ def execute_tracking(list_boxes, trackers, cur_index, init_point):
 # @constraint(AppSoftware="xavier")
 @task(returns=6,)
 def receive_boxes(socket_ip, dummy):
-    import zmq
+#    import zmq
     import struct
     import time
     import traceback
 
-    if ":" not in socket_ip:
-        socket_ip += ":5559"
+#    if ":" not in socket_ip:
+#        socket_ip += ":5559" 
     
     message = b""
     cam_id = None   
@@ -43,9 +43,11 @@ def receive_boxes(socket_ip, dummy):
     init_point = None
     no_read = True
 
-    context = zmq.Context()
-    sink = context.socket(zmq.REP)
-    sink.connect(f"tcp://{socket_ip}")
+#    context = zmq.Context()
+#    sink = context.socket(zmq.REP)
+#    sink.connect(f"tcp://{socket_ip}")
+    serverSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    serverSocket.bind((socket_ip, 5559))
 
     double_size = unsigned_long_size = 8
     int_size = float_size = 4
@@ -55,8 +57,10 @@ def receive_boxes(socket_ip, dummy):
         try:
             no_read = False
             #time.sleep(0.05)
-            message = sink.recv(zmq.NOBLOCK)
-            sink.send_string("", zmq.NOBLOCK) 
+#            message = sink.recv(zmq.NOBLOCK)
+#            sink.send_string("", zmq.NOBLOCK) 
+            message, address = serverSocket.recvfrom(16000)           
+            serverSocket.sendto(str.encode(''), address) 
             
             flag = len(message) > 0
             # This flag serves to know if the video has ended
@@ -81,13 +85,14 @@ def receive_boxes(socket_ip, dummy):
                 box_coords.append((lat_ur, lon_ur, lat_lr, lon_lr, lat_ll, lon_ll, lat_ul, lon_ul))
                 # pixels.append((x, y))
             # return cam_id, timestamp, boxes, dummy # TODO: added x, y (pixels) as they are not in list_boxes anymore
-        except zmq.ZMQError as e:
+        except socket.error as e:
+#        except zmq.ZMQError as e:
             no_read = True
             traceback.print_exc()
-            if e.errno == zmq.EAGAIN:
-                pass
-            else:
-                traceback.print_exc()
+#            if e.errno == zmq.EAGAIN:
+#                pass
+#            else:
+#                traceback.print_exc()
     
     return cam_id, timestamp, boxes, dummy, box_coords, init_point
 
