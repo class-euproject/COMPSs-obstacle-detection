@@ -15,7 +15,6 @@ NUM_ITERS = 60
 SNAP_PER_FEDERATION = 15
 N = 5
 CD_PROC = 0
-# mqtt_wait = True
 
 
 # @constraint(AppSoftware="nvidia")
@@ -390,36 +389,39 @@ def register_mqtt():
     client.subscribe("cd-out")
     return client
 
+def str2bool(v):
+    if isinstance(v, bool):
+       return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 def main():
     import argparse	
     import sys
     import time
+    import zmq
     from dataclay.api import init, finish
     from dataclay.exceptions.exceptions import DataClayException
 		
-    # if len(sys.argv) != 2:	
-    #     print("Incorrect number of params: python3 tracker.py ${TKDNN_IP} ${MQTT_ACTIVE} (optional)")	
-    # tkdnn_ip = sys.argv[1]	
-    # if len(sys.argv) == 3:	
-    #     mqtt_wait = (sys.argv[2] != "False")
-
     # Parse arguments to accept variable number of "IPs:Ports"	
-    mqtt_wait = True
+    # mqtt_wait = True
     parser = argparse.ArgumentParser()
     parser.add_argument("tkdnn_ips", nargs='+')
-    parser.add_argument("mqtt_wait", nargs='?', const=True, type=bool)  # TODO: add this parameter. so far hardcoded to true at top
+    parser.add_argument("mqtt_wait", nargs='?', const=True, type=str2bool, default=False)  # True as default
     args = parser.parse_args()
-    print(args)
 
-    if args.mqtt_wait != None:
-        mqtt_wait = args.mqtt_wait
+    # if args.mqtt_wait != None:
+    #     mqtt_wait = args.mqtt_wait
     
     init()
     from CityNS.classes import DKB, ListOfObjects
 
     # Register MQTT client to subscribe to MQTT server in 192.168.7.42
-    if mqtt_wait:
+    if args.mqtt_wait:
         client = register_mqtt()
         client.loop_start()
 
@@ -430,7 +432,7 @@ def main():
     compss_barrier()
 
     # Publish to the MQTT broker that the execution has started
-    if mqtt_wait:
+    if args.mqtt_wait:
         publish_mqtt(client)
 
     try:
@@ -465,7 +467,7 @@ def main():
     start_time = time.time()
     execute_trackers(args.tkdnn_ips, kb)
 
-    if mqtt_wait:
+    if args.mqtt_wait:
         while CD_PROC < NUM_ITERS:
             pass
 
