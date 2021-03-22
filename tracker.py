@@ -15,6 +15,7 @@ NUM_ITERS = 60
 SNAP_PER_FEDERATION = 15
 N = 5
 CD_PROC = 0
+# mqtt_wait = True
 
 
 # @constraint(AppSoftware="nvidia")
@@ -25,15 +26,18 @@ def execute_tracking(list_boxes, trackers, cur_index, init_point):
 
 
 # @constraint(AppSoftware="xavier")
-@task(returns=6,)
+@task(returns=7,)
 def receive_boxes(socket_ip, dummy):
 #    import zmq
     import struct
     import time
     import traceback
 
-#    if ":" not in socket_ip:
-#        socket_ip += ":5559" 
+    socket_port = 5559
+    if ":" in socket_ip:
+        socket_ip, socket_port = socket_ip.split(":")
+        socket_port = int(socket_port)
+    # print(f"SOCKET IP: {socket_ip} and SOCKET PORT: {socket_port}")
     
     message = b""
     cam_id = None   
@@ -47,7 +51,7 @@ def receive_boxes(socket_ip, dummy):
 #    sink = context.socket(zmq.REP)
 #    sink.connect(f"tcp://{socket_ip}")
     serverSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    serverSocket.bind((socket_ip, 5559))
+    serverSocket.bind((socket_ip, socket_port))
 
     double_size = unsigned_long_size = 8
     int_size = float_size = 4
@@ -94,7 +98,7 @@ def receive_boxes(socket_ip, dummy):
 #            else:
 #                traceback.print_exc()
     
-    return cam_id, timestamp, boxes, dummy, box_coords, init_point
+    return cam_id, timestamp, boxes, dummy, box_coords, init_point, frame_number
 
 
 # @constraint(AppSoftware="xavier")
@@ -134,20 +138,6 @@ def receive_boxes(socket_ip, dummy):
 #         # pixels.append((x, y))
 #     # return cam_id, timestamp, boxes, dummy # TODO: added x, y (pixels) as they are not in list_boxes anymore
 #     return cam_id, timestamp, boxes, dummy, box_coords
-
-
-# @task(returns=3, )
-# def merge_tracker_state(trackers_list, cur_index):
-#     import itertools
-#     trackers = []
-#     prev_cur_index = cur_index
-#     for tracker in itertools.chain.from_iterable(trackers_list):
-#         if tracker.id >= prev_cur_index:
-#             tracker.id = cur_index
-#             cur_index += 1
-#         trackers.append(tracker)
-#     tracker_indexes = [True] * cur_index + [False] * (32767 - cur_index)
-#     return trackers, tracker_indexes, cur_index
 
 
 # @constraint(AppSoftware="nvidia")
@@ -308,7 +298,7 @@ def execute_trackers(socket_ips, kb):
     import time
     import sys
     import os
-    from dataclay.api import get_dataclay_id
+    from dataclay.api import register_dataclay
 
     trackers_list = [[]] * len(socket_ips)
     cur_index = [0] * len(socket_ips)
@@ -318,10 +308,11 @@ def execute_trackers(socket_ips, kb):
     timestamps = [0] * len(socket_ips)
     deduplicated_trackers_list = []  # TODO: accumulate trackers
     box_coords = [0] * len(socket_ips)
+    frames = [0] * len(socket_ips)
 
     federation_ip, federation_port = "192.168.7.32", 11034  # TODO: change port accordingly
     # federation_ip, federation_port = "192.168.50.103", 21034 # TODO: change port accordingly
-    #dataclay_to_federate = get_dataclay_id(federation_ip, federation_port)
+    dataclay_to_federate = register_dataclay(federation_ip, federation_port)
 
     i = 0
     reception_dummies = [0] * len(socket_ips)
@@ -329,7 +320,7 @@ def execute_trackers(socket_ips, kb):
     while i < NUM_ITERS:
         for index, socket_ip in enumerate(socket_ips):
             # cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], pixels[index], sizes[index] = \
-            cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], box_coords[index], init_point = \
+            cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], box_coords[index], init_point, frames[index] = \
                 receive_boxes(socket_ip, reception_dummies[index])
             trackers_list[index], cur_index[index], info_for_deduplicator[index] = execute_tracking(list_boxes,
                                                                                                     trackers_list[index],
@@ -342,38 +333,20 @@ def execute_trackers(socket_ips, kb):
         # trackers, tracker_indexes, cur_index = merge_tracker_state(trackers_list)
         deduplicated_trackers = deduplicate(info_for_deduplicator, cam_ids) # , cam_ids, timestamps) # pass cam_ids and timestamp
         # deduplicated_trackers_list.append(deduplicated_trackers) # TODO: accumulate trackers
-        """
-        for trackers in trackers_list:
-            for idx, tracker in enumerate(trackers):
-                if tracker.id not in [t.id for t in trackers_list[0] if t.traj[-1].frame == i]:
-                    continue
-                cl = info_for_deduplicator[0][idx][2]
-                vel = info_for_deduplicator[0][idx][3]
-                yaw = info_for_deduplicator[0][idx][4]
-                lat = info_for_deduplicator[0][idx][0] # round(info_for_deduplicator[0][idx][0], 14)
-                lon = info_for_deduplicator[0][idx][1] # round(info_for_deduplicator[0][idx][1], 14)
-                track_id = info_for_deduplicator[0][idx][5]
-                pixel_x = info_for_deduplicator[0][idx][6]
-                pixel_y = info_for_deduplicator[0][idx][7]
-                pixel_w = info_for_deduplicator[0][idx][8]
-                pixel_h = info_for_deduplicator[0][idx][9]
-                return_dedu.append((cam_ids[0], tracker.id, cl, vel, yaw, lat, lon, pixel_x, pixel_y, pixel_w, pixel_h))
-                # return_dedu[idx] = tuple(j for i in return_dedu[idx] for j in (i if isinstance(i, tuple) else (i,)))
-        deduplicated_trackers = (timestamps[0], return_dedu)
-        """
 
         """# TODO: accumulate trackers
         if i != 0 and (i+1) % N == 0:
             snapshot = persist_info_accumulated(deduplicated_trackers_list, i, kb)
             deduplicated_trackers_list.clear() 
         """
-        #snapshot = persist_info(deduplicated_trackers, i, kb)
+        # TODO: frames[0] not correct when more than one camera. It should be passed in info_for_deduplicator and returned in deduplicated_trackers
+        snapshot = persist_info(deduplicated_trackers, frames[0], kb)  # i instead of frames[0]
         """
         snapshots.append(snapshot)
         if i != 0 and (i+1) % SNAP_PER_FEDERATION == 0:
             federate_info_accumulated(snapshots, dataclay_to_federate)
         """
-        #federate_info(snapshot, dataclay_to_federate)
+        federate_info(snapshot, dataclay_to_federate)
         i += 1
         # if i != 0 and i % 10 == 0:
         #     compss_barrier()
@@ -419,38 +392,31 @@ def register_mqtt():
 
 
 def main():
+    import argparse	
     import sys
     import time
     from dataclay.api import init, finish
     from dataclay.exceptions.exceptions import DataClayException
+		
+    # if len(sys.argv) != 2:	
+    #     print("Incorrect number of params: python3 tracker.py ${TKDNN_IP} ${MQTT_ACTIVE} (optional)")	
+    # tkdnn_ip = sys.argv[1]	
+    # if len(sys.argv) == 3:	
+    #     mqtt_wait = (sys.argv[2] != "False")
 
-    import os
-    from dataclay.tool.functions import get_stubs
-    from pathlib import Path
-    import os.path
-    from os import path
-    import time
+    # Parse arguments to accept variable number of "IPs:Ports"	
+    mqtt_wait = True
+    parser = argparse.ArgumentParser()
+    parser.add_argument("tkdnn_ips", nargs='+')
+    parser.add_argument("mqtt_wait", nargs='?', const=True, type=bool)  # TODO: add this parameter. so far hardcoded to true at top
+    args = parser.parse_args()
+    print(args)
 
-    # while not path.exists(os.getenv("CONTRACT_ID_PATH")):
-    #     time.sleep(2)
-
-    # USERNAME = os.getenv("USER", "defaultUser")
-    # PASSWORD = os.getenv("PASS", "defaultPass")
-    # NAMESPACE = os.getenv("NAMESPACE", "defaultNS")
-    # STUBSPATH = os.getenv("STUBSPATH")
-    # CONTRACT_ID = Path(os.getenv("CONTRACT_ID_PATH")).read_text()[:-1]
-    # print(f"Getting stubs for user {USERNAME}, with contract ID {CONTRACT_ID}, at {STUBSPATH}")
-    # get_stubs(USERNAME, PASSWORD, CONTRACT_ID, STUBSPATH)
-
-    if len(sys.argv) != 2:
-        print("Incorrect number of params: python3 tracker.py ${TKDNN_IP} ${MQTT_ACTIVE} (optional)")
-    mqtt_wait = False
-    tkdnn_ip = sys.argv[1]
-    if len(sys.argv) == 3:
-        mqtt_wait = (sys.argv[2] != "False")
-
-    # init()
-    # from CityNS.classes import DKB, ListOfObjects
+    if args.mqtt_wait != None:
+        mqtt_wait = args.mqtt_wait
+    
+    init()
+    from CityNS.classes import DKB, ListOfObjects
 
     # Register MQTT client to subscribe to MQTT server in 192.168.7.42
     if mqtt_wait:
@@ -458,36 +424,53 @@ def main():
         client.loop_start()
 
     # initialize all computing units in all workers
-    # num_cus = 8
-    # for i in range(num_cus):
-    #     init_task()
-    # compss_barrier()
+    num_cus = 8
+    for i in range(num_cus):
+        init_task()
+    compss_barrier()
 
     # Publish to the MQTT broker that the execution has started
     if mqtt_wait:
         publish_mqtt(client)
 
-    # try:
-    #     kb = DKB.get_by_alias("DKB")
-    # except DataClayException:
-    #     kb = DKB()
-    #     list_objects = ListOfObjects()
-    #     list_objects.make_persistent()
-    #     kb.list_objects = list_objects
-    #     kb.make_persistent("DKB")
-    kb = None
+    try:
+        kb = DKB.get_by_alias("DKB")
+    except DataClayException:
+        kb = DKB()
+        list_objects = ListOfObjects()
+        list_objects.make_persistent()
+        kb.list_objects = list_objects
+        kb.make_persistent("DKB")
+
+    ### ACK TO START WORKFLOW AT tkDNN ###
+    for socket_ip in args.tkdnn_ips:
+        if ":" not in socket_ip:
+            socket_ip += ":5559"
+        context = zmq.Context()
+        sink = context.socket(zmq.REQ)
+        sink.connect(f"tcp://{socket_ip}")
+        sink.send_string("")
+        sink.close()
+        context.term()
+    # if ":" not in tkdnn_ip:
+    #     tkdnn_ip += ":5559"
+    # context = zmq.Context()
+    # sink = context.socket(zmq.REQ)
+    # sink.connect(f"tcp://{tkdnn_ip}")
+    # sink.send_string("")
+    # sink.close()
+    # context.term()
+    ###                                ###
+
     start_time = time.time()
-    execute_trackers([tkdnn_ip], kb)
-    #execute_trackers([("/tmp/pipe_yolo2COMPSs", "/tmp/pipe_COMPSs2yolo")], kb)
-    # pipe_paths = [("/tmp/pipe_yolo2COMPSs", "/tmp/pipe_COMPSs2yolo"), ("/tmp/pipe_write",  "/tmp/pipe_read")]
-    # print("ExecTime: " + str(time.time() - start_time))
-    # print("ExecTime per Iteration: " + str((time.time() - start_time) / NUM_ITERS))
+    execute_trackers(args.tkdnn_ips, kb)
 
     if mqtt_wait:
         while CD_PROC < NUM_ITERS:
             pass
+
     print("Exiting Application...")
-    #finish()
+    finish()
 
 
 if __name__ == "__main__":
