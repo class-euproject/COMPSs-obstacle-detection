@@ -15,7 +15,7 @@ NUM_ITERS = 400
 SNAP_PER_FEDERATION = 15
 N = 5
 CD_PROC = 0
-mqtt_wait = True
+# mqtt_wait = True
 
 
 # @constraint(AppSoftware="nvidia")
@@ -417,6 +417,17 @@ def register_mqtt():
     return client
 
 
+def str2bool(v):
+    if isinstance(v, bool):
+       return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
+
 def main():
     import sys
     import time
@@ -433,13 +444,14 @@ def main():
     # Parse arguments to accept variable number of "IPs:Ports"
     parser = argparse.ArgumentParser()
     parser.add_argument("tkdnn_ips", nargs='+')
+    parser.add_argument("mqtt_wait", nargs='?', const=True, type=str2bool, default=False)  # True as default
     args = parser.parse_args()
     
     init()
     from CityNS.classes import DKB, ListOfObjects
 
     # Register MQTT client to subscribe to MQTT server in 192.168.7.42
-    if mqtt_wait:
+    if args.mqtt_wait:
         client = register_mqtt()
         client.loop_start()
 
@@ -450,7 +462,7 @@ def main():
     compss_barrier()
 
     # Publish to the MQTT broker that the execution has started
-    if mqtt_wait:
+    if args.mqtt_wait:
         publish_mqtt(client)
 
     try:
@@ -466,7 +478,7 @@ def main():
     execute_trackers(args.tkdnn_ips, kb)
 
     """
-    if mqtt_wait:
+    if args.mqtt_wait:
         while CD_PROC < NUM_ITERS:
             pass
     """
