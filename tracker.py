@@ -11,7 +11,7 @@ import track
 import socket
 # import threading
 
-NUM_ITERS = 60
+NUM_ITERS = 400
 SNAP_PER_FEDERATION = 15
 N = 5
 CD_PROC = 0
@@ -46,11 +46,8 @@ def receive_boxes(socket_ip, dummy):
     init_point = None
     no_read = True
 
-#    context = zmq.Context()
-#    sink = context.socket(zmq.REP)
-#    sink.connect(f"tcp://{socket_ip}")
     serverSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    serverSocket.bind((socket_ip, socket_port))
+    serverSocket.sendto(b"", (socket_ip, socket_port))
 
     double_size = unsigned_long_size = 8
     int_size = float_size = 4
@@ -62,8 +59,8 @@ def receive_boxes(socket_ip, dummy):
             #time.sleep(0.05)
 #            message = sink.recv(zmq.NOBLOCK)
 #            sink.send_string("", zmq.NOBLOCK) 
-            message, address = serverSocket.recvfrom(16000)           
-            serverSocket.sendto(str.encode(''), address) 
+            message, address = serverSocket.recvfrom(16000)
+            #serverSocket.sendto(str.encode(''), address) 
             
             flag = len(message) > 0
             # This flag serves to know if the video has ended
@@ -435,6 +432,7 @@ def main():
     if args.mqtt_wait:
         publish_mqtt(client)
 
+    # Dataclay KB generation
     try:
         kb = DKB.get_by_alias("DKB")
     except DataClayException:
@@ -454,15 +452,6 @@ def main():
         sink.send_string("")
         sink.close()
         context.term()
-    # if ":" not in tkdnn_ip:
-    #     tkdnn_ip += ":5559"
-    # context = zmq.Context()
-    # sink = context.socket(zmq.REQ)
-    # sink.connect(f"tcp://{tkdnn_ip}")
-    # sink.send_string("")
-    # sink.close()
-    # context.term()
-    ###                                ###
 
     start_time = time.time()
     execute_trackers(args.tkdnn_ips, kb)
@@ -477,3 +466,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
