@@ -47,7 +47,7 @@ def receive_boxes(socket_ip, dummy):
     no_read = True
 
     serverSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    serverSocket.sendto(b"", (socket_ip, socket_port))
+    serverSocket.sendto(b"A", (socket_ip, socket_port))
 
     double_size = unsigned_long_size = 8
     int_size = float_size = 4
