@@ -14,7 +14,7 @@ def main():
     contract_id = None
     while contract_id is None:
         try:
-            contract_id = subprocess.check_output(f"java -cp {dataclay_jar_path} es.bsc.dataclay.tool.AccessNamespace {user} {password} {namespace} | tail -1", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)[:-1].decode()
+            contract_id = subprocess.check_output(f"java -cp {dataclay_jar_path} es.bsc.dataclay.tool.AccessNamespace {user} {password} {namespace} | tail -1", shell=True, stderr=subprocess.DEVNULL)[:-1].decode()
             print(f"CONTRACT ID IS {contract_id}")
             if contract_id == "":
                 contract_id = None
