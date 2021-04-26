@@ -11,10 +11,10 @@ import track
 import socket
 # import threading
 
-NUM_ITERS = 400
+NUM_ITERS = 800
 SNAP_PER_FEDERATION = 15
 N = 5
-NUM_ITERS_FOR_CLEANING = 30
+NUM_ITERS_FOR_CLEANING = 400
 CD_PROC = 0
 mqtt_wait = False  # True
 
@@ -205,27 +205,26 @@ def persist_info(trackers, count, kb):
     snapshot_alias = "events_" + str(count)
     snapshot = EventsSnapshot(snapshot_alias)
     snapshot.make_persistent()
+    # kb.add_events_snapshot(snapshot)  # persists snapshot
     snapshot.add_events_from_trackers(trackers, kb)  # create events inside dataclay
     return snapshot
 
 
 @constraint(AppSoftware="xavier")
-@task(snapshot=IN, backend_to_federate=IN)
-def federate_info(snapshot, backend_to_federate):
-    snapshot.federate_to_backend(backend_to_federate)
+@task(kb=IN, snapshot=IN, backend_to_federate=IN)
+def federate_info(kb, snapshot, backend_to_federate):
+    kb.federate_compressed_snapshot(snapshot, backend_to_federate)
 
 
 @task(snapshots=COLLECTION_IN, backend_to_federate=IN)
 def federate_info_accumulated(snapshots, backend_to_federate):
     for snapshot in snapshots:
-        snapshot.federate_to_backend(backend_to_federate)
+        snapshot.federate(backend_to_federate)
 
 
 @task(kb=IN, foo=INOUT)
 def remove_objects_from_dataclay(kb, foo):
-    from dataclay.api import get_num_objects
     kb.remove_old_snapshots_and_objects(int(datetime.now().timestamp() * 1000), True)
-    print(f"Current number of objects in dataclay: {get_num_objects()}")
     return foo
 
 
@@ -268,7 +267,7 @@ def analyze_pollution(input_path, output_file):
 @task(is_replicated=True)
 def init_task():
     import uuid
-    from CityNS.classes import DKB, Event, Object, EventsSnapshot, ListOfObjects, FederationInfo
+    from CityNS.classes import DKB, Event, Object, EventsSnapshot, FederationCompressedInfo
     kb = DKB()
     kb.make_persistent("FAKE_" + str(uuid.uuid4()))
     # kb.get_objects_from_dkb()
@@ -280,6 +279,8 @@ def init_task():
     obj = Object("FAKE_OBJ_" + str(uuid.uuid4()), "FAKE", 0, 0, 0, 0)
     obj.make_persistent("FAKE_OBJ_" + str(uuid.uuid4()))
     obj.get_events_history(20)
+    compressed = FederationCompressedInfo(snap, kb)
+    compressed.snap_alias
 
 
 @constraint(AppSoftware="nvidia")
@@ -305,8 +306,8 @@ def execute_trackers(socket_ips, kb):
     deduplicated_trackers_list = []  # TODO: accumulate trackers
     box_coords = [0] * len(socket_ips)
 
-    federation_ip, federation_port = "192.168.7.32", 11034  # TODO: change port accordingly
-    # federation_ip, federation_port = "192.168.50.103", 21034 # TODO: change port accordingly
+    # federation_ip, federation_port = "192.168.7.32", 11034  # TODO: change port accordingly
+    federation_ip, federation_port = "192.168.50.103", 51034 # TODO: change port accordingly
     dataclay_to_federate = register_dataclay(federation_ip, federation_port)
     external_backend_id = get_external_backend_id_by_name("DS1", dataclay_to_federate)
 
@@ -314,7 +315,7 @@ def execute_trackers(socket_ips, kb):
     reception_dummies = [0] * len(socket_ips)
     start_time = time.time()
     foo = None
-    while i < NUM_ITERS:
+    while i < NUM_ITERS: 
         for index, socket_ip in enumerate(socket_ips):
             # cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], pixels[index], sizes[index] = \
             cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], box_coords[index], init_point = \
@@ -361,14 +362,15 @@ def execute_trackers(socket_ips, kb):
         if i != 0 and (i+1) % SNAP_PER_FEDERATION == 0:
             federate_info_accumulated(snapshots, dataclay_to_federate)
         """
-        federate_info(snapshot, external_backend_id)
+        federate_info(kb, snapshot, external_backend_id)
         i += 1
 
         if i != 0 and i % NUM_ITERS_FOR_CLEANING == 0:
             # delete objects based on timestamps
-            # kb.remove_old_snapshots_and_objects(int(datetime.now().timestamp() * 1000), True)
             foo = remove_objects_from_dataclay(kb, foo)
-            # compss_barrier()
+        if i % NUM_ITERS == 0:
+            compss_barrier()
+            print("AFTER BARRIER")
             # input_path = "/home/nvidia/CLASS/class-app/phemlight/in/"
             # output_file = "results_" + str(uuid.uuid4()).split("-")[-1] + ".csv"
             # analyze_pollution(input_path, output_file)
