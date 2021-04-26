@@ -16,7 +16,7 @@ SNAP_PER_FEDERATION = 15
 N = 5
 NUM_ITERS_FOR_CLEANING = 400
 CD_PROC = 0
-mqtt_wait = False  # True
+# mqtt_wait = False  # True
 
 
 # @constraint(AppSoftware="nvidia")
@@ -428,13 +428,14 @@ def main():
     # Parse arguments to accept variable number of "IPs:Ports"
     parser = argparse.ArgumentParser()
     parser.add_argument("tkdnn_ips", nargs='+')
+    parser.add_argument("mqtt_wait", nargs='?', const=True, type=str2bool, default=False)  # True as default
     args = parser.parse_args()
     
     init()
     from CityNS.classes import DKB
 
     # Register MQTT client to subscribe to MQTT server in 192.168.7.42
-    if mqtt_wait:
+    if args.mqtt_wait:
         client = register_mqtt()
         client.loop_start()
 
@@ -445,7 +446,7 @@ def main():
     compss_barrier()
 
     # Publish to the MQTT broker that the execution has started
-    if mqtt_wait:
+    if args.mqtt_wait:
         publish_mqtt(client)
 
     try:
@@ -458,7 +459,7 @@ def main():
     execute_trackers(args.tkdnn_ips, kb)
 
     """
-    if mqtt_wait:
+    if args.mqtt_wait:
         while CD_PROC < NUM_ITERS:
             pass
     """

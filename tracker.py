@@ -16,7 +16,7 @@ SNAP_PER_FEDERATION = 15
 N = 5
 NUM_ITERS_FOR_CLEANING = 30
 CD_PROC = 0
-mqtt_wait = False  # True
+# mqtt_wait = True
 
 
 # @constraint(AppSoftware="nvidia")
@@ -223,9 +223,9 @@ def federate_info_accumulated(snapshots, backend_to_federate):
 
 @task(kb=IN, foo=INOUT)
 def remove_objects_from_dataclay(kb, foo):
-    from dataclay.api import get_num_objects
+    # from dataclay.api import get_num_objects
     kb.remove_old_snapshots_and_objects(int(datetime.now().timestamp() * 1000), True)
-    print(f"Current number of objects in dataclay: {get_num_objects()}")
+    # print(f"Current number of objects in dataclay: {get_num_objects()}")
     return foo
 
 
@@ -268,7 +268,7 @@ def analyze_pollution(input_path, output_file):
 @task(is_replicated=True)
 def init_task():
     import uuid
-    from CityNS.classes import DKB, Event, Object, EventsSnapshot, ListOfObjects, FederationInfo
+    from CityNS.classes import DKB, Event, Object, EventsSnapshot
     kb = DKB()
     kb.make_persistent("FAKE_" + str(uuid.uuid4()))
     # kb.get_objects_from_dkb()
@@ -410,6 +410,17 @@ def register_mqtt():
     return client
 
 
+def str2bool(v):
+    if isinstance(v, bool):
+       return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
+
 def main():
     import sys
     import time
@@ -426,13 +437,14 @@ def main():
     # Parse arguments to accept variable number of "IPs:Ports"
     parser = argparse.ArgumentParser()
     parser.add_argument("tkdnn_ips", nargs='+')
+    parser.add_argument("mqtt_wait", nargs='?', const=True, type=str2bool, default=False)  # True as default
     args = parser.parse_args()
     
     init()
     from CityNS.classes import DKB
 
     # Register MQTT client to subscribe to MQTT server in 192.168.7.42
-    if mqtt_wait:
+    if args.mqtt_wait:
         client = register_mqtt()
         client.loop_start()
 
@@ -443,7 +455,7 @@ def main():
     compss_barrier()
 
     # Publish to the MQTT broker that the execution has started
-    if mqtt_wait:
+    if args.mqtt_wait:
         publish_mqtt(client)
 
     try:
@@ -456,7 +468,7 @@ def main():
     execute_trackers(args.tkdnn_ips, kb)
 
     """
-    if mqtt_wait:
+    if args.mqtt_wait:
         while CD_PROC < NUM_ITERS:
             pass
     """
