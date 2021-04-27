@@ -1,4 +1,4 @@
-from datetime import datetime
+import datetime
 from pycompss.api.parameter import *
 from pycompss.api.task import task
 from pycompss.api.api import compss_barrier, compss_wait_on
@@ -11,10 +11,10 @@ import track
 import socket
 # import threading
 
-NUM_ITERS = 400
+NUM_ITERS = 800
 SNAP_PER_FEDERATION = 15
 N = 5
-NUM_ITERS_FOR_CLEANING = 30
+NUM_ITERS_FOR_CLEANING = 400
 CD_PROC = 0
 
 
@@ -24,11 +24,9 @@ def execute_tracking(list_boxes, trackers, cur_index, init_point):
     return track.track2(list_boxes, trackers, cur_index, init_point)
 
 
-
 # @constraint(AppSoftware="xavier")
 @task(returns=7,)
 def receive_boxes(socket_ip, dummy):
-#    import zmq
     import struct
     import time
     import traceback
@@ -37,7 +35,6 @@ def receive_boxes(socket_ip, dummy):
     if ":" in socket_ip:
         socket_ip, socket_port = socket_ip.split(":")
         socket_port = int(socket_port)
-    # print(f"SOCKET IP: {socket_ip} and SOCKET PORT: {socket_port}")
     
     message = b""
     cam_id = None   
@@ -200,23 +197,23 @@ def persist_info(trackers, count, kb):
     return snapshot
 
 
-@task(snapshot=IN, backend_to_federate=IN)
-def federate_info(snapshot, backend_to_federate):
-    snapshot.federate_to_backend(backend_to_federate)
+@task(kb=IN, snapshot=IN, backend_to_federate=IN)
+def federate_info(kb, snapshot, backend_to_federate):
+    kb.federate_compressed_snapshot(snapshot, backend_to_federate)
 
 
-@task(snapshots=COLLECTION_IN, backend_to_federate=IN)
-def federate_info_accumulated(snapshots, backend_to_federate):
+@task(kb=IN, snapshots=COLLECTION_IN, backend_to_federate=IN)
+def federate_info_accumulated(kb, snapshots, backend_to_federate):
     for snapshot in snapshots:
-        snapshot.federate_to_backend(backend_to_federate)
+        kb.federate_compressed_snapshot(snapshot, backend_to_federate)
 
 
 @task(kb=IN, foo=INOUT)
 def remove_objects_from_dataclay(kb, foo):
-    # from dataclay.api import get_num_objects
-	kb.remove_old_snapshots_and_objects(int(datetime.now().timestamp() * 1000), True)
-    # print(f"Current number of objects in dataclay: {get_num_objects()}")
-	return foo
+    # Remove snapshots and objects older than 10 minutes
+    kb.remove_old_snapshots_and_objects(
+        int((datetime.datetime.now() - datetime.timedelta(minutes=10)).timestamp() * 1000), True)
+    return foo
 
 
 # @constraint(AppSoftware="phemlight") # TODO: to be executed in Cloud. Remove it otherwise
@@ -258,7 +255,7 @@ def analyze_pollution(input_path, output_file):
 @task(is_replicated=True)
 def init_task():
     import uuid
-    from CityNS.classes import DKB, Event, Object, EventsSnapshot
+    from CityNS.classes import DKB, Event, Object, EventsSnapshot, FederationCompressedInfo
     kb = DKB()
     kb.make_persistent("FAKE_" + str(uuid.uuid4()))
     # kb.get_objects_from_dkb()
@@ -270,6 +267,8 @@ def init_task():
     obj = Object("FAKE_OBJ_" + str(uuid.uuid4()), "FAKE", 0, 0, 0, 0)
     obj.make_persistent("FAKE_OBJ_" + str(uuid.uuid4()))
     obj.get_events_history(20)
+    compressed = FederationCompressedInfo(snap, kb)
+    compressed.snap_alias
 
 
 @constraint(AppSoftware="nvidia")
@@ -300,7 +299,6 @@ def execute_trackers(socket_ips, kb):
     # federation_ip, federation_port = "192.168.50.103", 21034 # TODO: change port accordingly
     dataclay_to_federate = register_dataclay(federation_ip, federation_port)
     external_backend_id = get_external_backend_id_by_name("DS1", dataclay_to_federate)
-
 
     i = 0
     reception_dummies = [0] * len(socket_ips)
@@ -335,15 +333,18 @@ def execute_trackers(socket_ips, kb):
         if i != 0 and (i+1) % SNAP_PER_FEDERATION == 0:
             federate_info_accumulated(snapshots, dataclay_to_federate)
         """
-        federate_info(snapshot, external_backend_id)
+        federate_info(kb, snapshot, external_backend_id)
         i += 1
-        if i != 0 and i % NUM_ITERS_FOR_CLEANING == 0:
+        """
+        if i % NUM_ITERS == 0:
             # compss_barrier()
-            # delete objects based on timestamps
-            foo = remove_objects_from_dataclay(kb, foo)
             # input_path = "/home/nvidia/CLASS/class-app/phemlight/in/"
             # output_file = "results_" + str(uuid.uuid4()).split("-")[-1] + ".csv"
             # analyze_pollution(input_path, output_file)
+        """
+        if i % NUM_ITERS_FOR_CLEANING == 0:
+            # delete objects based on timestamps
+            foo = remove_objects_from_dataclay(kb, foo)
 
     compss_barrier()
     end_time = time.time()
@@ -448,6 +449,7 @@ def main():
         sink.close()
         context.term()
 
+    start_time = time.time()
     execute_trackers(args.tkdnn_ips, kb)
 
     if args.mqtt_wait:
