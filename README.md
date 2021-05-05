@@ -44,7 +44,8 @@ Download and install [collision detection](https://github.com/class-euproject/co
 The application has been developed and tested with `Python 3.6.8`. The following python packages must be installed as well:
 
 ```
-python3 -m pip install dataclay==2.5 pymap3d zmq struct requests pygeohash geolib
+pip3 install pymap3d zmq struct requests pygeohash geolib
+pip3 install -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple dataClay==2.6.dev20210422
 ```
 
 
