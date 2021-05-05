@@ -191,10 +191,10 @@ def dump(id_cam, ts, trackers, iteration, list_boxes, info_for_deduplicator, box
 def persist_info_accumulated(trackers_list, count, kb):
     from CityNS.classes import EventsSnapshot
     snapshot_alias = "events_" + str(count)
-    snapshot = EventsSnapshot(snapshot_alias)
-    kb.add_events_snapshot(snapshot) # persists snapshot
+    snapshot = EventsSnapshot(snapshot_alias, print_federated_events=True, trigger_modena_tp=True)
+    snapshot.make_persistent()
     for trackers in trackers_list:
-        snapshot.add_events_from_trackers(trackers, kb) # create events inside dataclay
+        snapshot.add_events_from_trackers(trackers, kb)  # create events inside dataclay
     return snapshot
 
 
@@ -203,7 +203,7 @@ def persist_info_accumulated(trackers_list, count, kb):
 def persist_info(trackers, count, kb):
     from CityNS.classes import EventsSnapshot
     snapshot_alias = "events_" + str(count)
-    snapshot = EventsSnapshot(snapshot_alias)
+    snapshot = EventsSnapshot(snapshot_alias, print_federated_events=True, trigger_modena_tp=True)
     snapshot.make_persistent()
     # kb.add_events_snapshot(snapshot)  # persists snapshot
     snapshot.add_events_from_trackers(trackers, kb)  # create events inside dataclay
@@ -224,7 +224,9 @@ def federate_info_accumulated(snapshots, backend_to_federate):
 
 @task(kb=IN, foo=INOUT)
 def remove_objects_from_dataclay(kb, foo):
-    kb.remove_old_snapshots_and_objects(int(datetime.now().timestamp() * 1000), True)
+    # kb.remove_old_snapshots_and_objects(int(datetime.now().timestamp() * 1000), True)
+    kb.remove_old_snapshots_and_objects(
+        int((datetime.datetime.now() - datetime.timedelta(minutes=10)).timestamp() * 1000), True)
     return foo
 
 
@@ -274,9 +276,9 @@ def init_task():
     snap = EventsSnapshot("FAKE_SNAP_" + str(uuid.uuid4()))
     snap.make_persistent("FAKE_SNAP_" + str(uuid.uuid4()))
     snap.snap_alias
-    event = Event(None, None, None, None, None, None, None)
+    event = Event()
     event.make_persistent("FAKE_EVENT_" + str(uuid.uuid4()))
-    obj = Object("FAKE_OBJ_" + str(uuid.uuid4()), "FAKE", 0, 0, 0, 0)
+    obj = Object("FAKE_OBJ_" + str(uuid.uuid4()), "FAKE")
     obj.make_persistent("FAKE_OBJ_" + str(uuid.uuid4()))
     obj.get_events_history(20)
     compressed = FederationCompressedInfo(snap, kb)
