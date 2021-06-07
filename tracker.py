@@ -230,37 +230,36 @@ def remove_objects_from_dataclay(kb, foo):
 
 
 # @constraint(AppSoftware="phemlight") # TODO: to be executed in Cloud. Remove it otherwise
-@task(input_path=IN, output_file=IN)
-def analyze_pollution(input_path, output_file):
+@task(input_path=IN, output_file=IN, kb=IN)
+def analyze_pollution(input_path, output_file, kb):
     import os
     import uuid
     pollution_file_name = "pollution_" + str(uuid.uuid4()).split("-")[-1] + ".csv"
     if os.path.exists(pollution_file_name):
         os.remove(pollution_file_name)
     from CityNS.classes import Event, Object, EventsSnapshot, DKB
-    kb = DKB.get_by_alias("DKB")
-    obj_refs = set()
+    obj_ids = set()
     i = 0
     with open(pollution_file_name, "w") as f:
         f.write("VehID, LinkID, Time, Vehicle_type, Av_link_speed\n")
-        for snap in kb.kb:
-            for obj_ref in snap.objects_refs:
-                if obj_ref not in obj_refs:
-                    obj_refs.add(obj_ref)
-                    obj = Object.get_by_alias(obj_ref)
+        for snap in kb.kb.values():  # TODO: check if iteration order matters
+            for event in snap.events:
+                obj = event.detected_object
+                id_obj = obj.id_object
+                if id_obj not in obj_ids:
+                    obj_ids.add(id_obj)
                     obj_type = obj.type
-                    if obj_type in ["car", "bus"]:
+                    if obj_type in ["car", "bus", "20", "21", "30", "31", "40"]:
                         obj_type = obj_type.title()
                     elif obj_type == "truck":
                         obj_type = "HDV"
                     else:
                         continue
-                    for event in obj.events_history:
-                        f.write(f"{obj_ref}, {20939 + i % 2}, {event.timestamp}, {obj_type}, 50\n")  # TODO: link_id
-                        # needs to be obtained from object
+                    for timestamp, ev in obj.events_history.items():
+                        f.write(f"{id_obj}, {id_obj.split('_')[0]}, {timestamp}, {obj_type}, {ev.speed}\n")  # TODO: average link speed
                         i += 1
     os.system(
-        f"Rscript --vanilla /home/nvidia/CLASS/class-app/phemlight/PHEMLight_advance.R {input_path} $PWD/{pollution_file_name}"
+        f"Rscript --vanilla /home/nvidia/CLASS/COMPSs-obstacle-detection-tcpsockets/phemlight/PHEMLight_advance.R {input_path} $PWD/{pollution_file_name}"
         f" {output_file}")  # TODO: R script path is hardcoded
 
 
