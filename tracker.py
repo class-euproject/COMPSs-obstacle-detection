@@ -141,11 +141,11 @@ def receive_boxes(socket_ip, dummy):
 # @constraint(AppSoftware="nvidia")
 @task(trackers_list=COLLECTION_IN, cam_ids=COLLECTION_IN)
 # def deduplicate(trackers_list, cam_ids, timestamps): # TODO: waiting for UNIMORE
-def deduplicate(trackers_list, cam_ids):
+def deduplicate(trackers_list, cam_ids, foo_dedu):
     return_message = dd.compute_deduplicator(trackers_list, cam_ids)
     # print(f"Returned {len(return_message)} objects (from the original "
     #      f"{' + '.join([str(len(t)) for t in trackers_list])} = {sum([len(t) for t in trackers_list])})")
-    return return_message
+    return return_message, foo_dedu
 
 
 def dump(id_cam, ts, trackers, iteration, list_boxes, info_for_deduplicator, box_coords):
@@ -200,6 +200,7 @@ def persist_info(trackers, count, kb):
     return snapshot
 
 
+@constraint(AppSoftware="xavier")
 @task(snapshot=IN, backend_to_federate=IN)
 def federate_info(snapshot, backend_to_federate):
     snapshot.federate_to_backend(backend_to_federate)
@@ -305,7 +306,7 @@ def execute_trackers(socket_ips, kb):
     i = 0
     reception_dummies = [0] * len(socket_ips)
     start_time = time.time()
-    foo = None
+    foo_dedu = foo = None
     while i < NUM_ITERS:
         for index, socket_ip in enumerate(socket_ips):
             # cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], pixels[index], sizes[index] = \
@@ -320,7 +321,7 @@ def execute_trackers(socket_ips, kb):
             # info_for_deduplicator[index]), box_coords[index])  #, pixels[index])
 
         # trackers, tracker_indexes, cur_index = merge_tracker_state(trackers_list)
-        deduplicated_trackers = deduplicate(info_for_deduplicator, cam_ids) # , cam_ids, timestamps) # pass cam_ids and timestamp
+        deduplicated_trackers, foo_dedu = deduplicate(info_for_deduplicator, cam_ids, foo_dedu) 
         # deduplicated_trackers_list.append(deduplicated_trackers) # TODO: accumulate trackers
 
         """# TODO: accumulate trackers
@@ -422,6 +423,8 @@ def main():
     for i in range(num_cus):
         init_task()
     compss_barrier()
+    print(f"Init task completed {datetime.now()}")
+    input("Press enter to continue...")
 
     # Publish to the MQTT broker that the execution has started
     if args.mqtt_wait:

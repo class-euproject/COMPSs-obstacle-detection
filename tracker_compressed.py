@@ -138,11 +138,11 @@ def receive_boxes(socket_ip, dummy):
 # @constraint(AppSoftware="nvidia")
 @task(trackers_list=COLLECTION_IN, cam_ids=COLLECTION_IN)
 # def deduplicate(trackers_list, cam_ids, timestamps): # TODO: waiting for UNIMORE
-def deduplicate(trackers_list, cam_ids):
+def deduplicate(trackers_list, cam_ids, foo_dedu):
     return_message = dd.compute_deduplicator(trackers_list, cam_ids)
     # print(f"Returned {len(return_message)} objects (from the original "
     #      f"{' + '.join([str(len(t)) for t in trackers_list])} = {sum([len(t) for t in trackers_list])})")
-    return return_message
+    return return_message, foo_dedu
 
 
 def dump(id_cam, ts, trackers, iteration, list_boxes, info_for_deduplicator, box_coords):
@@ -196,7 +196,7 @@ def persist_info(trackers, count, kb):
     snapshot.add_events_from_trackers(trackers, kb)  # create events inside dataclay
     return snapshot
 
-
+@constraint(AppSoftware="xavier")
 @task(kb=IN, snapshot=IN, backend_to_federate=IN)
 def federate_info(kb, snapshot, backend_to_federate):
     kb.federate_compressed_snapshot(snapshot, backend_to_federate)
@@ -217,24 +217,24 @@ def remove_objects_from_dataclay(kb, foo):
 
 
 # @constraint(AppSoftware="phemlight") # TODO: to be executed in Cloud. Remove it otherwise
-@task(input_path=IN, output_file=IN)
-def analyze_pollution(input_path, output_file):
+@task(input_path=IN, output_file=IN, kb=IN)
+def analyze_pollution(input_path, output_file, kb):
     import os
     import uuid
     pollution_file_name = "pollution_" + str(uuid.uuid4()).split("-")[-1] + ".csv"
     if os.path.exists(pollution_file_name):
         os.remove(pollution_file_name)
     from CityNS.classes import Event, Object, EventsSnapshot, DKB
-    kb = DKB.get_by_alias("DKB")
-    obj_refs = set()
+    obj_ids = set()
     i = 0
     with open(pollution_file_name, "w") as f:
         f.write("VehID, LinkID, Time, Vehicle_type, Av_link_speed\n")
-        for snap in kb.kb:
-            for obj_ref in snap.objects_refs:
-                if obj_ref not in obj_refs:
-                    obj_refs.add(obj_ref)
-                    obj = Object.get_by_alias(obj_ref)
+        for snap in kb.kb.values():  # TODO: check if iteration order matters
+            for event in snap.events:
+                obj = event.detected_object
+                id_obj = obj.id_object
+                if id_obj not in obj_ids:
+                    obj_ids.add(id_obj)
                     obj_type = obj.type
                     if obj_type in ["car", "bus"]:
                         obj_type = obj_type.title()
@@ -242,9 +242,8 @@ def analyze_pollution(input_path, output_file):
                         obj_type = "HDV"
                     else:
                         continue
-                    for event in obj.events_history:
-                        f.write(f"{obj_ref}, {20939 + i % 2}, {event.timestamp}, {obj_type}, 50\n")  # TODO: link_id
-                        # needs to be obtained from object
+                    for timestamp, ev in obj.events_history.items():
+                        f.write(f"{id_obj}, {id_obj.split('_')[0]}, {timestamp}, {obj_type}, {ev.speed}\n")  # TODO: average link speed
                         i += 1
     os.system(
         f"Rscript --vanilla /home/nvidia/CLASS/class-app/phemlight/PHEMLight_advance.R {input_path} $PWD/{pollution_file_name}"
@@ -303,7 +302,7 @@ def execute_trackers(socket_ips, kb):
     i = 0
     reception_dummies = [0] * len(socket_ips)
     start_time = time.time()
-    foo = None
+    foo_dedu = foo = None
     while i < NUM_ITERS:
         for index, socket_ip in enumerate(socket_ips):
             # cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], pixels[index], sizes[index] = \
@@ -318,7 +317,7 @@ def execute_trackers(socket_ips, kb):
             # info_for_deduplicator[index]), box_coords[index])  #, pixels[index])
 
         # trackers, tracker_indexes, cur_index = merge_tracker_state(trackers_list)
-        deduplicated_trackers = deduplicate(info_for_deduplicator, cam_ids) # , cam_ids, timestamps) # pass cam_ids and timestamp
+        deduplicated_trackers, foo_dedu = deduplicate(info_for_deduplicator, cam_ids, foo_dedu)
         # deduplicated_trackers_list.append(deduplicated_trackers) # TODO: accumulate trackers
 
         """# TODO: accumulate trackers
@@ -335,16 +334,16 @@ def execute_trackers(socket_ips, kb):
         """
         federate_info(kb, snapshot, external_backend_id)
         i += 1
-        """
-        if i % NUM_ITERS == 0:
-            # compss_barrier()
-            # input_path = "/home/nvidia/CLASS/class-app/phemlight/in/"
-            # output_file = "results_" + str(uuid.uuid4()).split("-")[-1] + ".csv"
-            # analyze_pollution(input_path, output_file)
-        """
         if i % NUM_ITERS_FOR_CLEANING == 0:
             # delete objects based on timestamps
             foo = remove_objects_from_dataclay(kb, foo)
+        """
+        if i % NUM_ITERS == 0:
+            # compss_barrier()
+            # input_path = "/home/nvidia/CLASS/COMPSs-obstacle-detection-tcpsockets/phemlight/in/"
+            # output_file = "results_" + str(uuid.uuid4()).split("-")[-1] + ".csv"
+            # analyze_pollution(input_path, output_file, kb)
+        """
 
     compss_barrier()
     end_time = time.time()
@@ -423,6 +422,8 @@ def main():
     for i in range(num_cus):
         init_task()
     compss_barrier()
+    print(f"Init task completed {datetime.now()}")
+    input("Press enter to continue...")
 
     # Publish to the MQTT broker that the execution has started
     if args.mqtt_wait:
