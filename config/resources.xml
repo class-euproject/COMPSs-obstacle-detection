@@ -20,7 +20,7 @@
                         </Property>
                         <Property>
                                 <Name>ImageName</Name>
-                                <Value>jesusperalesh/tracking_partial</Value>
+                                <Value>bscppc/class-object-tracking</Value>
 			</Property>
 			<Property>
                                 <Name>PullIfNeeded</Name>
@@ -54,7 +54,7 @@
                         </Property>
                         <Property>
                                 <Name>ImageName</Name>
-                                <Value>jesusperalesh/tracking_partial</Value>
+                                <Value>bscppc/class-object-tracking</Value>
 			</Property>
 			<Property>
                                 <Name>PullIfNeeded</Name>
@@ -84,7 +84,7 @@
                         </Property>
                         <Property>
                                 <Name>ImageName</Name>
-                                <Value>jesusperalesh/tracking_partial</Value>
+                                <Value>bscppc/class-object-tracking</Value>
                         </Property>
 			<Property>
                                 <Name>PullIfNeeded</Name>
@@ -114,7 +114,7 @@
                         </Property>
                         <Property>
                                 <Name>ImageName</Name>
-                                <Value>jesusperalesh/tracking_partial</Value>
+                                <Value>bscppc/class-object-tracking</Value>
 			</Property>
 			<Property>
                                 <Name>PullIfNeeded</Name>
