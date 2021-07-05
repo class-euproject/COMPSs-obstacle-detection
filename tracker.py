@@ -9,26 +9,25 @@ import deduplicator as dd
 import paho.mqtt.client as mqtt
 import track
 import socket
-# import threading
+import os
 
 NUM_ITERS = 400
+NUM_ITERS_POLLUTION = 25
 SNAP_PER_FEDERATION = 15
 N = 5
-NUM_ITERS_FOR_CLEANING = 30
+NUM_ITERS_FOR_CLEANING = 300
 CD_PROC = 0
 
+pollution_file_name = "pollution.csv"
 
-# @constraint(AppSoftware="nvidia")
+
 @task(returns=3, list_boxes=IN, trackers=IN, cur_index=IN, init_point=IN)
 def execute_tracking(list_boxes, trackers, cur_index, init_point):
     return track.track2(list_boxes, trackers, cur_index, init_point)
 
 
-
-# @constraint(AppSoftware="xavier")
 @task(returns=7,)
 def receive_boxes(socket_ip, dummy):
-#    import zmq
     import struct
     import time
     import traceback
@@ -37,8 +36,7 @@ def receive_boxes(socket_ip, dummy):
     if ":" in socket_ip:
         socket_ip, socket_port = socket_ip.split(":")
         socket_port = int(socket_port)
-    # print(f"SOCKET IP: {socket_ip} and SOCKET PORT: {socket_port}")
-    
+
     message = b""
     cam_id = None   
     timestamp = None
@@ -58,17 +56,12 @@ def receive_boxes(socket_ip, dummy):
     while no_read:
         try:
             no_read = False
-            #time.sleep(0.05)
-#            message = sink.recv(zmq.NOBLOCK)
-#            sink.send_string("", zmq.NOBLOCK) 
             message, address = serverSocket.recvfrom(16000)
-            #serverSocket.sendto(str.encode(''), address) 
-            
+
             flag = len(message) > 0
             # This flag serves to know if the video has ended
             cam_id = struct.unpack_from("i", message[1:1 + int_size])[0]
             timestamp = struct.unpack_from("Q", message[1 + int_size:1 + int_size + unsigned_long_size])[0]
-            # pixels = []  # for logging purposes it is needed
             box_coords = []
             lat, lon = struct.unpack_from("dd", message[1 + int_size + unsigned_long_size:1 + int_size + unsigned_long_size
                                                                                         + double_size * 2])
@@ -85,66 +78,17 @@ def receive_boxes(socket_ip, dummy):
                                                                                 offset + double_size * 2 + int_size + 1 +
                                                                                 float_size * 4:])
                 box_coords.append((lat_ur, lon_ur, lat_lr, lon_lr, lat_ll, lon_ll, lat_ul, lon_ul))
-                # pixels.append((x, y))
-            # return cam_id, timestamp, boxes, dummy # TODO: added x, y (pixels) as they are not in list_boxes anymore
         except socket.error as e:
-#        except zmq.ZMQError as e:
             no_read = True
             traceback.print_exc()
-#            if e.errno == zmq.EAGAIN:
-#                pass
-#            else:
-#                traceback.print_exc()
-    
+
     return cam_id, timestamp, boxes, dummy, box_coords, init_point, frame_number
 
 
-# @constraint(AppSoftware="xavier")
-# @task(returns=5, )
-# def receive_boxes(pipe_paths, dummy):
-#     import struct
-
-#     double_size = unsigned_long_size = 8
-#     int_size = float_size = 4
-
-#     # opening and closing pipes at each task otherwise read gets blocked until no writer
-#     fifo_read = open(pipe_paths[0], 'rb')
-#     fifo_write = open(pipe_paths[1], 'w')
-
-#     boxes = []
-#     message = fifo_read.read()
-#     fifo_read.close()
-#     fifo_write.write('0')
-#     fifo_write.close()
-#     flag = (message == 0)
-#     # This flag serves to know if the video has ended
-#     cam_id = struct.unpack_from("i", message[1:1 + int_size])[0]
-#     timestamp = struct.unpack_from("Q", message[1 + int_size:1 + int_size + unsigned_long_size])[0]
-#     # pixels = []  # for logging purposes it is needed
-#     box_coords = []
-#     for offset in range(1 + int_size + unsigned_long_size, len(message),
-#                         double_size * 10 + int_size + 1 + float_size * 4):
-#         north, east, frame_number, obj_class = struct.unpack_from('ddIc', message[
-#                                                                         offset:offset + double_size * 2 + int_size + 1])
-#         x, y, w, h = struct.unpack_from('ffff', message[offset + double_size * 2 + int_size + 1:offset + double_size * 2
-#                                                                         + int_size + 1 + float_size * 4])
-#         boxes.append(track.obj_m(north, east, frame_number, ord(obj_class), int(w), int(h), int(x), int(y), 0.0))
-#         lat_ur, lon_ur, lat_lr, lon_lr, lat_ll, lon_ll, lat_ul, lon_ul = struct.unpack_from('dddddddd', message[
-#                                                                         offset + double_size * 2 + int_size + 1 +
-#                                                                         float_size * 4:])
-#         box_coords.append((lat_ur, lon_ur, lat_lr, lon_lr, lat_ll, lon_ll, lat_ul, lon_ul))
-#         # pixels.append((x, y))
-#     # return cam_id, timestamp, boxes, dummy # TODO: added x, y (pixels) as they are not in list_boxes anymore
-#     return cam_id, timestamp, boxes, dummy, box_coords
-
-
-# @constraint(AppSoftware="nvidia")
-@task(trackers_list=COLLECTION_IN, cam_ids=COLLECTION_IN)
-# def deduplicate(trackers_list, cam_ids, timestamps): # TODO: waiting for UNIMORE
+@constraint(AppSoftware="xavier")
+@task(trackers_list=COLLECTION_IN, cam_ids=COLLECTION_IN, foo_dedu=INOUT)
 def deduplicate(trackers_list, cam_ids, foo_dedu):
     return_message = dd.compute_deduplicator(trackers_list, cam_ids)
-    # print(f"Returned {len(return_message)} objects (from the original "
-    #      f"{' + '.join([str(len(t)) for t in trackers_list])} = {sum([len(t) for t in trackers_list])})")
     return return_message, foo_dedu
 
 
@@ -182,7 +126,7 @@ def dump(id_cam, ts, trackers, iteration, list_boxes, info_for_deduplicator, box
 def persist_info_accumulated(trackers_list, count, kb):
     from CityNS.classes import EventsSnapshot
     snapshot_alias = "events_" + str(count)
-    snapshot = EventsSnapshot(snapshot_alias, print_federated_events=True, trigger_modena_tp=True)
+    snapshot = EventsSnapshot(snapshot_alias, print_federated_events=True, trigger_modena_tp=False)
     snapshot.make_persistent()
     for trackers in trackers_list:
         snapshot.add_events_from_trackers(trackers, kb)  # create events inside dataclay
@@ -190,13 +134,32 @@ def persist_info_accumulated(trackers_list, count, kb):
 
 
 @constraint(AppSoftware="xavier")
-@task(returns=1, trackers=IN, count=IN, kb=IN)
-def persist_info(trackers, count, kb):
+@task(returns=1, trackers=IN, count=IN, kb=IN, with_pollution=IN)
+def persist_info(trackers, count, kb, with_pollution):
+    classes = ["person", "car", "truck", "bus", "motor", "bike", "rider", "traffic light", "traffic sign", "train",
+               "class11", "class12", "class13", "class14", "class15", "class16", "class17", "class18","class19",
+               "class20", "class21", "class22", "class23", "class24", "class25", "class26", "class27", "class28",
+               "class29", "class30", "class31"]
     from CityNS.classes import EventsSnapshot
     snapshot_alias = "events_" + str(count)
-    snapshot = EventsSnapshot(snapshot_alias, print_federated_events=True, trigger_modena_tp=True)
+    snapshot = EventsSnapshot(snapshot_alias, print_federated_events=True, trigger_modena_tp=False)
     snapshot.make_persistent()
     snapshot.add_events_from_trackers(trackers, kb)  # create events inside dataclay
+    if with_pollution:
+        if not os.path.exists(pollution_file_name):
+            with open(pollution_file_name, "w") as f:
+                f.write("VehID, LinkID, Time, Vehicle_type, Av_link_speed\n")
+        for index, ev in enumerate(trackers[1]):
+            if classes[ev[2]] in ["car", "bus"]:
+                obj_type = (classes[ev[2]]).title()
+            elif classes[ev[2]] in ["class20", "class30", "class31"]:
+                obj_type = "car"
+            elif classes[ev[2]] == "truck":
+                obj_type = "HDV"
+            else:
+                continue
+            with open(pollution_file_name, "a") as f:
+                f.write(f"{ev[0]}_{ev[1]}, {ev[0]}, {trackers[0]}, {obj_type}, {ev[3]}\n")  # TODO: average link speed
     return snapshot
 
 
@@ -214,45 +177,21 @@ def federate_info_accumulated(snapshots, backend_to_federate):
 
 @task(kb=IN, foo=INOUT)
 def remove_objects_from_dataclay(kb, foo):
-    # from dataclay.api import get_num_objects
-	kb.remove_old_snapshots_and_objects(int(datetime.now().timestamp() * 1000), True)
-    # print(f"Current number of objects in dataclay: {get_num_objects()}")
-	return foo
+    kb.remove_old_snapshots_and_objects(int(datetime.now().timestamp() * 1000), True)
+    return foo
 
 
-# @constraint(AppSoftware="phemlight") # TODO: to be executed in Cloud. Remove it otherwise
-@task(input_path=IN, output_file=IN)
-def analyze_pollution(input_path, output_file):
-    import os
-    import uuid
-    pollution_file_name = "pollution_" + str(uuid.uuid4()).split("-")[-1] + ".csv"
-    if os.path.exists(pollution_file_name):
-        os.remove(pollution_file_name)
-    from CityNS.classes import Event, Object, EventsSnapshot, DKB
-    kb = DKB.get_by_alias("DKB")
-    obj_refs = set()
-    i = 0
-    with open(pollution_file_name, "w") as f:
-        f.write("VehID, LinkID, Time, Vehicle_type, Av_link_speed\n")
-        for snap in kb.kb:
-            for obj_ref in snap.objects_refs:
-                if obj_ref not in obj_refs:
-                    obj_refs.add(obj_ref)
-                    obj = Object.get_by_alias(obj_ref)
-                    obj_type = obj.type
-                    if obj_type in ["car", "bus"]:
-                        obj_type = obj_type.title()
-                    elif obj_type == "truck":
-                        obj_type = "HDV"
-                    else:
-                        continue
-                    for event in obj.events_history:
-                        f.write(f"{obj_ref}, {20939 + i % 2}, {event.timestamp}, {obj_type}, 50\n")  # TODO: link_id
-                        # needs to be obtained from object
-                        i += 1
+# @constraint(AppSoftware="phemlight") # to be executed in Cloud. Remove it otherwise
+@constraint(AppSoftware="xavier")
+@task(foo=INOUT)
+def analyze_pollution(foo):
+    a = 'oquesea'
+    b = pollution_file_name
+    c = 'stream.csv'
     os.system(
-        f"Rscript --vanilla /home/nvidia/CLASS/class-app/phemlight/PHEMLight_advance.R {input_path} $PWD/{pollution_file_name}"
-        f" {output_file}")  # TODO: R script path is hardcoded
+        f"scp {pollution_file_name} esabate@192.168.7.32:/m/home/esabate/pollutionMap/phemlight-r/in/ && rm {pollution_file_name}")
+    os.system(f"ssh esabate@192.168.7.32 nohup bash dockerScripts/phemlightCommand.sh  {a} {b} {c} &>/dev/null & ")
+    return foo
 
 
 # @task() # for my scheduler
@@ -280,7 +219,7 @@ def boxes_and_track(socket_ip, trackers_list, tracker_indexes, cur_index):
     return execute_tracking(list_boxes, trackers_list, tracker_indexes, cur_index)
 
 
-def execute_trackers(socket_ips, kb):
+def execute_trackers(socket_ips, kb, with_pollution):
     import uuid
     import time
     import sys
@@ -298,10 +237,8 @@ def execute_trackers(socket_ips, kb):
     frames = [0] * len(socket_ips)
 
     federation_ip, federation_port = "192.168.7.32", 11034  # TODO: change port accordingly
-    # federation_ip, federation_port = "192.168.50.103", 21034 # TODO: change port accordingly
     dataclay_to_federate = register_dataclay(federation_ip, federation_port)
     external_backend_id = get_external_backend_id_by_name("DS1", dataclay_to_federate)
-
 
     i = 0
     reception_dummies = [0] * len(socket_ips)
@@ -309,28 +246,22 @@ def execute_trackers(socket_ips, kb):
     foo_dedu = foo = None
     while i < NUM_ITERS:
         for index, socket_ip in enumerate(socket_ips):
-            # cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], pixels[index], sizes[index] = \
             cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], box_coords[index], init_point, frames[index] = \
                 receive_boxes(socket_ip, reception_dummies[index])
             trackers_list[index], cur_index[index], info_for_deduplicator[index] = execute_tracking(list_boxes,
                                                                                                     trackers_list[index],
                                                                                                     cur_index[index],
                                                                                                     init_point)
-            # print(f"CAM ID: {cam_ids[index]}, timestamp: {timestamps[index]}, list_boxes: {[list_boxes]}")
-            # dump(cam_ids[index], timestamps[index], trackers_list[index], i, list_boxes, \
-            # info_for_deduplicator[index]), box_coords[index])  #, pixels[index])
 
-        # trackers, tracker_indexes, cur_index = merge_tracker_state(trackers_list)
         deduplicated_trackers, foo_dedu = deduplicate(info_for_deduplicator, cam_ids, foo_dedu) 
-        # deduplicated_trackers_list.append(deduplicated_trackers) # TODO: accumulate trackers
 
         """# TODO: accumulate trackers
         if i != 0 and (i+1) % N == 0:
             snapshot = persist_info_accumulated(deduplicated_trackers_list, i, kb)
             deduplicated_trackers_list.clear() 
         """
-        # TODO: frames[0] not correct when more than one camera. It should be passed in info_for_deduplicator and returned in deduplicated_trackers
-        snapshot = persist_info(deduplicated_trackers, frames[0], kb)  # i instead of frames[0]
+        # frames[0] not correct when more than one camera. It should be passed in info_for_deduplicator and returned in deduplicated_trackers
+        snapshot = persist_info(deduplicated_trackers, frames[0], kb, with_pollution)  # i instead of frames[0]
         """
         snapshots.append(snapshot)
         if i != 0 and (i+1) % SNAP_PER_FEDERATION == 0:
@@ -338,13 +269,13 @@ def execute_trackers(socket_ips, kb):
         """
         federate_info(snapshot, external_backend_id)
         i += 1
+        if i != 0 and i % NUM_ITERS_POLLUTION == 0 and with_pollution:
+            print("Executing pollution")
+            foo = analyze_pollution(foo)
         if i != 0 and i % NUM_ITERS_FOR_CLEANING == 0:
             # compss_barrier()
             # delete objects based on timestamps
             foo = remove_objects_from_dataclay(kb, foo)
-            # input_path = "/home/nvidia/CLASS/class-app/phemlight/in/"
-            # output_file = "results_" + str(uuid.uuid4()).split("-")[-1] + ".csv"
-            # analyze_pollution(input_path, output_file)
 
     compss_barrier()
     end_time = time.time()
@@ -400,15 +331,12 @@ def main():
     from dataclay.api import init, finish
     from dataclay.exceptions.exceptions import DataClayException
 		
-    # Parse arguments to accept variable number of "IPs:Ports"	
-    # mqtt_wait = True
+    # Parse arguments to accept variable number of "IPs:Ports"
     parser = argparse.ArgumentParser()
     parser.add_argument("tkdnn_ips", nargs='+')
-    parser.add_argument("mqtt_wait", nargs='?', const=True, type=str2bool, default=False)  # True as default
+    parser.add_argument("--mqtt_wait", nargs='?', const=True, type=str2bool, default=False)  # True as default
+    parser.add_argument("--with_pollution", nargs='?', const=True, type=str2bool, default=False)  # True as default
     args = parser.parse_args()
-
-    # if args.mqtt_wait != None:
-    #     mqtt_wait = args.mqtt_wait
     
     init()
     from CityNS.classes import DKB
@@ -451,7 +379,7 @@ def main():
         sink.close()
         context.term()
 
-    execute_trackers(args.tkdnn_ips, kb)
+    execute_trackers(args.tkdnn_ips, kb, args.with_pollution)
 
     if args.mqtt_wait:
         while CD_PROC < NUM_ITERS:
