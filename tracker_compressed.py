@@ -86,9 +86,9 @@ def receive_boxes(socket_ip, dummy):
 
 
 @constraint(AppSoftware="xavier")
-@task(trackers_list=COLLECTION_IN, cam_ids=COLLECTION_IN, foo_dedu=INOUT)
-def deduplicate(trackers_list, cam_ids, foo_dedu):
-    return_message = dd.compute_deduplicator(trackers_list, cam_ids)
+@task(trackers_list=COLLECTION_IN, cam_ids=COLLECTION_IN, foo_dedu=INOUT, frames=COLLECTION_IN)
+def deduplicate(trackers_list, cam_ids, foo_dedu, frames):
+    return_message = dd.compute_deduplicator(trackers_list, cam_ids, frames)
     return return_message, foo_dedu
 
 
@@ -256,7 +256,7 @@ def execute_trackers(socket_ips, kb, with_pollution):
                                                                                                     cur_index[index],
                                                                                                     init_point)
 
-        deduplicated_trackers, foo_dedu = deduplicate(info_for_deduplicator, cam_ids, foo_dedu)
+        deduplicated_trackers, foo_dedu = deduplicate(info_for_deduplicator, cam_ids, foo_dedu, frames)  # or frames appended inside info_for_dedu in tracking
 
         """# TODO: accumulate trackers
         if i != 0 and (i+1) % N == 0:
@@ -264,7 +264,7 @@ def execute_trackers(socket_ips, kb, with_pollution):
             deduplicated_trackers_list.clear() 
         """
         # frames[0] not correct when more than one camera. It should be passed in info_for_deduplicator and returned in deduplicated_trackers
-        snapshot = persist_info(deduplicated_trackers, frames[0], kb)  # i instead of frames[0]
+        snapshot = persist_info(deduplicated_trackers, kb, with_pollution)
         """
         snapshots.append(snapshot)
         if i != 0 and (i+1) % SNAP_PER_FEDERATION == 0:
