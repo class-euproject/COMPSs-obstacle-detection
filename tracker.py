@@ -8,6 +8,7 @@ from utils import pixel2GPS
 import deduplicator as dd
 import paho.mqtt.client as mqtt
 import track
+import argparse
 import socket
 # import threading
 
@@ -16,7 +17,6 @@ SNAP_PER_FEDERATION = 15
 N = 5
 NUM_ITERS_FOR_CLEANING = 30
 CD_PROC = 0
-# mqtt_wait = True
 
 
 # @constraint(AppSoftware="nvidia")
@@ -25,9 +25,8 @@ def execute_tracking(list_boxes, trackers, cur_index, init_point):
     return track.track2(list_boxes, trackers, cur_index, init_point)
 
 
-
 # @constraint(AppSoftware="xavier")
-@task(returns=6,)
+@task(returns=7,)
 def receive_boxes(socket_ip, dummy):
     import zmq
     import struct
@@ -44,6 +43,7 @@ def receive_boxes(socket_ip, dummy):
     box_coords = None
     init_point = None
     no_read = True
+    frame_number = -1
 
     context = zmq.Context()
     sink = context.socket(zmq.REP)
@@ -56,7 +56,6 @@ def receive_boxes(socket_ip, dummy):
     while no_read:
         try:
             no_read = False
-            #time.sleep(0.05)
             message = sink.recv(zmq.NOBLOCK)
             sink.send_string("", zmq.NOBLOCK) 
             
@@ -91,7 +90,7 @@ def receive_boxes(socket_ip, dummy):
             else:
                 traceback.print_exc()
     
-    return cam_id, timestamp, boxes, dummy, box_coords, init_point
+    return cam_id, timestamp, boxes, dummy, box_coords, init_point, frame_number
 
 
 # @constraint(AppSoftware="xavier")
@@ -148,10 +147,10 @@ def receive_boxes(socket_ip, dummy):
 
 
 # @constraint(AppSoftware="nvidia")
-@task(trackers_list=COLLECTION_IN, cam_ids=COLLECTION_IN)
+@task(trackers_list=COLLECTION_IN, cam_ids=COLLECTION_IN, frames=COLLECTION_IN)
 # def deduplicate(trackers_list, cam_ids, timestamps): # TODO: waiting for UNIMORE
-def deduplicate(trackers_list, cam_ids):
-    return_message = dd.compute_deduplicator(trackers_list, cam_ids)
+def deduplicate(trackers_list, cam_ids, frames):
+    return_message = dd.compute_deduplicator(trackers_list, cam_ids, frames, False)
     # print(f"Returned {len(return_message)} objects (from the original "
     #      f"{' + '.join([str(len(t)) for t in trackers_list])} = {sum([len(t) for t in trackers_list])})")
     return return_message
@@ -191,7 +190,7 @@ def dump(id_cam, ts, trackers, iteration, list_boxes, info_for_deduplicator, box
 def persist_info_accumulated(trackers_list, count, kb):
     from CityNS.classes import EventsSnapshot
     snapshot_alias = "events_" + str(count)
-    snapshot = EventsSnapshot(snapshot_alias, print_federated_events=True, trigger_modena_tp=True)
+    snapshot = EventsSnapshot(snapshot_alias, print_federated_events=True, trigger_modena_tp=False)
     snapshot.make_persistent()
     for trackers in trackers_list:
         snapshot.add_events_from_trackers(trackers, kb)  # create events inside dataclay
@@ -203,7 +202,7 @@ def persist_info_accumulated(trackers_list, count, kb):
 def persist_info(trackers, count, kb):
     from CityNS.classes import EventsSnapshot
     snapshot_alias = "events_" + str(count)
-    snapshot = EventsSnapshot(snapshot_alias, print_federated_events=True, trigger_modena_tp=True)
+    snapshot = EventsSnapshot(snapshot_alias, print_federated_events=True, trigger_modena_tp=False)
     snapshot.make_persistent()
     snapshot.add_events_from_trackers(trackers, kb)  # create events inside dataclay
     return snapshot
@@ -270,7 +269,6 @@ def init_task():
     from CityNS.classes import DKB, Event, Object, EventsSnapshot
     kb = DKB()
     kb.make_persistent("FAKE_" + str(uuid.uuid4()))
-    # kb.get_objects_from_dkb()
     snap = EventsSnapshot("FAKE_SNAP_" + str(uuid.uuid4()))
     snap.make_persistent("FAKE_SNAP_" + str(uuid.uuid4()))
     snap.snap_alias
@@ -303,6 +301,7 @@ def execute_trackers(socket_ips, kb):
     timestamps = [0] * len(socket_ips)
     deduplicated_trackers_list = []  # TODO: accumulate trackers
     box_coords = [0] * len(socket_ips)
+    frames = [0] * len(socket_ips)
 
     federation_ip, federation_port = "192.168.7.32", 11034  # TODO: change port accordingly
     # federation_ip, federation_port = "192.168.50.103", 21034 # TODO: change port accordingly
@@ -316,8 +315,8 @@ def execute_trackers(socket_ips, kb):
     while i < NUM_ITERS:
         for index, socket_ip in enumerate(socket_ips):
             # cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], pixels[index], sizes[index] = \
-            cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], box_coords[index], init_point = \
-                receive_boxes(socket_ip, reception_dummies[index])
+            cam_ids[index], timestamps[index], list_boxes, reception_dummies[index], box_coords[index], init_point, \
+                        frames[index] = receive_boxes(socket_ip, reception_dummies[index])
             trackers_list[index], cur_index[index], info_for_deduplicator[index] = execute_tracking(list_boxes,
                                                                                                     trackers_list[index],
                                                                                                     cur_index[index],
@@ -327,7 +326,7 @@ def execute_trackers(socket_ips, kb):
             # info_for_deduplicator[index]), box_coords[index])  #, pixels[index])
 
         # trackers, tracker_indexes, cur_index = merge_tracker_state(trackers_list)
-        deduplicated_trackers = deduplicate(info_for_deduplicator, cam_ids) # , cam_ids, timestamps) # pass cam_ids and timestamp
+        deduplicated_trackers = deduplicate(info_for_deduplicator, cam_ids, frames) # , cam_ids, timestamps) # pass cam_ids and timestamp
         # deduplicated_trackers_list.append(deduplicated_trackers) # TODO: accumulate trackers
         """
         for trackers in trackers_list:
@@ -425,7 +424,6 @@ def main():
     import time
     from dataclay.api import init, finish
     from dataclay.exceptions.exceptions import DataClayException
-    import argparse
 
     # if len(sys.argv) != 2:
     #     print("Incorrect number of params: python3 tracker.py ${TKDNN_IP} ${MQTT_ACTIVE} (optional)")
