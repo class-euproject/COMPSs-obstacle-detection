@@ -1,6 +1,7 @@
 [submodule "tracker_CLASS"]
 	path = tracker_CLASS
 	url = https://github.com/class-euproject/tracker_CLASS
+	branch = bsc
 [submodule "phemlight"]
 	path = phemlight
 	url = https://earth.bsc.es/gitlab/drodrig1/phemlight
